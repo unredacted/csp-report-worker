@@ -1,2 +1,307 @@
-# csp-worker
-A Cloudflare Worker which accepts CSP report violations and forwards them onwards
+# csp-report-worker
+
+A Cloudflare Worker that accepts [CSP violation reports](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP) from browsers, deduplicates them, stores them in Workers KV, and forwards notifications via webhooks and pluggable email providers.
+
+## Features
+
+- **Dual-format ingestion** — accepts both legacy `report-uri` (`application/csp-report`) and modern Reporting API v1 `report-to` (`application/reports+json`) formats
+- **Deduplication** — SHA-256 fingerprint-based suppression window prevents notification floods from repeated violations
+- **KV storage** — all reports stored with configurable TTL, retrievable via authenticated API
+- **Webhook notifications** — fire-and-forget POST to Slack, Discord, or any HTTP endpoint
+- **Pluggable email providers** — send via Mailgun, AWS SES, Resend, or Cloudflare Email Workers
+- **Edge-native** — runs entirely on Cloudflare's edge with no Node.js dependencies
+
+## Quick Start
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/youruser/csp-report-worker.git
+cd csp-report-worker
+npm install
+```
+
+### 2. Create your config
+
+```bash
+cp wrangler-example.toml wrangler.toml
+```
+
+> **Note:** `wrangler.toml` is gitignored. Your local config (with real KV namespace IDs, webhook URLs, etc.) will not be committed.
+
+### 3. Create a KV namespace
+
+```bash
+npx wrangler kv namespace create CSP_REPORTS
+```
+
+Copy the output ID into your `wrangler.toml`:
+
+```toml
+[[kv_namespaces]]
+binding = "CSP_REPORTS"
+id = "paste-your-id-here"
+```
+
+### 4. Configure environment variables
+
+Edit your `wrangler.toml` to set notification targets:
+
+```toml
+[vars]
+NOTIFY_EMAILS = "security@example.com,ops@example.com"
+NOTIFY_WEBHOOKS = "https://hooks.slack.com/services/T.../B.../xxx"
+EMAIL_FROM = "csp-reports@yourdomain.com"
+EMAIL_PROVIDER = "mailgun"  # or "ses", "resend", "cloudflare"
+DEDUP_WINDOW_MINUTES = "60"
+KV_TTL_SECONDS = "604800"
+ALLOWED_ORIGINS = ""
+```
+
+### 5. Set the API token (secret)
+
+```bash
+npx wrangler secret put API_TOKEN
+```
+
+This token is used to authenticate `GET /reports` API requests.
+
+### 6. Deploy
+
+```bash
+npm run deploy
+```
+
+### 7. Configure your CSP header
+
+Point your site's CSP header at the worker:
+
+```
+Content-Security-Policy: default-src 'self'; script-src 'self'; report-uri https://your-worker.workers.dev/report
+```
+
+For the modern Reporting API:
+
+```
+Content-Security-Policy: default-src 'self'; script-src 'self'
+Reporting-Endpoints: csp-endpoint="https://your-worker.workers.dev/report"
+Content-Security-Policy: default-src 'self'; script-src 'self'; report-to csp-endpoint
+```
+
+## API Reference
+
+### Report Ingestion
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/report` | Primary ingestion endpoint |
+| `POST` | `/report/csp` | Alias (for `report-uri` convention) |
+
+Both return `204 No Content` on success. Browsers expect this and do not read the body.
+
+### Health Check
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/health` | Returns `204` — uptime checks |
+
+### Reports API (authenticated)
+
+All `GET` endpoints require `Authorization: Bearer <API_TOKEN>`.
+
+#### `GET /reports`
+
+List recent reports (newest first).
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `limit` | `50` | Number of reports (max 200) |
+| `cursor` | — | Pagination cursor from previous response |
+| `directive` | — | Filter by violated directive (e.g. `script-src`) |
+
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  https://your-worker.workers.dev/reports?limit=10&directive=script-src
+```
+
+Response:
+```json
+{
+  "reports": [{ "id": "...", "violatedDirective": "script-src", ... }],
+  "cursor": "..."
+}
+```
+
+#### `GET /reports/:id`
+
+Fetch a single report by its SHA-256 ID.
+
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  https://your-worker.workers.dev/reports/abc123...
+```
+
+## Architecture
+
+```
+Browser                    Worker                         External
+  │                          │                               │
+  ├─POST /report────────────►│                               │
+  │  (csp-report or          │──parse + normalise            │
+  │   reports+json)          │──compute fingerprint          │
+  │                          │──check dedup (KV)             │
+  │◄─── 204 ─────────────────│                               │
+  │                          │                               │
+  │                     ctx.waitUntil()                      │
+  │                          │──store report (KV)            │
+  │                          │──if new: notify               │
+  │                          │   ├──webhook POST ───────────►│
+  │                          │   └──email (provider) ────────►│
+```
+
+### Email Providers
+
+The `EMAIL_PROVIDER` variable selects the email backend. Set it to one of:
+
+| Provider | `EMAIL_PROVIDER` | Required Vars | Required Secrets |
+|----------|-----------------|---------------|------------------|
+| **Mailgun** | `mailgun` | `MAILGUN_DOMAIN`, `MAILGUN_REGION` | `MAILGUN_API_KEY` |
+| **AWS SES** | `ses` | `AWS_SES_REGION` | `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY` |
+| **Resend** | `resend` | — | `RESEND_API_KEY` |
+| **Cloudflare** | `cloudflare` | — | — (uses `[[send_email]]` binding) |
+
+Leave `EMAIL_PROVIDER` empty to disable email notifications entirely.
+
+Secrets are set via `wrangler secret put <NAME>` and are never stored in config files.
+
+### KV Key Design
+
+| Key pattern | Value | TTL |
+|-------------|-------|-----|
+| `report:{invertedTs}:{id}` | Full normalised report JSON | `KV_TTL_SECONDS` |
+| `idx:{id}` | Pointer to primary key | `KV_TTL_SECONDS` |
+| `dedup:{fingerprint}` | `{ count, firstSeen }` | `DEDUP_WINDOW_MINUTES × 60` |
+
+**Inverted timestamp** (`9999999999999 - Date.now()`) ensures KV's lexicographic `list()` returns newest reports first, enabling efficient cursor-based pagination.
+
+### Deduplication
+
+The fingerprint is a SHA-256 hash of:
+```
+blockedUri | violatedDirective | documentUri | sourceFile:lineNumber
+```
+
+This groups identical violations. When a report's fingerprint is seen for the first time in its dedup window, a notification fires. Subsequent duplicates within the window are stored but do not trigger notifications.
+
+## Email Setup
+
+Email is optional — set `EMAIL_PROVIDER` to enable it. All providers require `EMAIL_FROM` to be set.
+
+### Mailgun
+
+1. Create a Mailgun account and verify your sending domain
+2. Set your vars:
+   ```toml
+   EMAIL_PROVIDER = "mailgun"
+   MAILGUN_DOMAIN = "mg.yourdomain.com"
+   MAILGUN_REGION = "us"  # or "eu"
+   ```
+3. Set the API key secret: `wrangler secret put MAILGUN_API_KEY`
+
+### AWS SES
+
+1. Verify your sender domain/email in the [SES console](https://console.aws.amazon.com/ses/)
+2. Create an IAM user with `ses:SendEmail` permission
+3. Set your vars:
+   ```toml
+   EMAIL_PROVIDER = "ses"
+   AWS_SES_REGION = "us-east-1"
+   ```
+4. Set secrets:
+   ```bash
+   wrangler secret put AWS_SES_ACCESS_KEY_ID
+   wrangler secret put AWS_SES_SECRET_ACCESS_KEY
+   ```
+
+### Resend
+
+1. Create a [Resend](https://resend.com) account and add your domain
+2. Set your vars:
+   ```toml
+   EMAIL_PROVIDER = "resend"
+   ```
+3. Set the API key secret: `wrangler secret put RESEND_API_KEY`
+
+### Cloudflare Email Workers
+
+Requires [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/) on the zone.
+
+1. Enable Email Routing and verify destination addresses
+2. Uncomment the `[[send_email]]` binding in `wrangler.toml`
+3. Set your vars:
+   ```toml
+   EMAIL_PROVIDER = "cloudflare"
+   ```
+
+## Development
+
+```bash
+# Run locally
+npm run dev
+
+# Run tests
+npm test
+
+# Type check
+npm run typecheck
+
+# Generate wrangler types
+npm run types
+```
+
+### Testing
+
+Tests use [`@cloudflare/vitest-pool-workers`](https://developers.cloudflare.com/workers/testing/vitest-integration/) which runs inside the `workerd` runtime with real KV bindings (via Miniflare).
+
+```bash
+npm test
+```
+
+## Project Structure
+
+```
+csp-report-worker/
+├── src/
+│   ├── index.ts              # Worker entrypoint, router
+│   ├── ingest.ts             # Parse + normalise incoming reports
+│   ├── dedup.ts              # Fingerprint + KV dedup logic
+│   ├── store.ts              # KV read/write for reports
+│   ├── config.ts             # Environment variable parsing
+│   ├── auth.ts               # Bearer token check
+│   ├── api.ts                # GET /reports handlers
+│   ├── types.ts              # Shared TypeScript types
+│   └── notify/
+│       ├── index.ts          # Notification orchestrator
+│       ├── email.ts          # Email dispatch (provider-agnostic)
+│       ├── provider.ts       # Email provider interface + factory
+│       ├── webhook.ts        # Generic webhook POST
+│       └── format.ts         # Plain text + HTML + Slack formatters
+├── test/
+│   ├── ingest.test.ts
+│   ├── dedup.test.ts
+│   ├── format.test.ts
+│   ├── email.test.ts
+│   └── api.test.ts
+├── wrangler-example.toml         # Template — copy to wrangler.toml
+├── wrangler.toml                 # Your local config (gitignored)
+├── package.json
+├── tsconfig.json
+├── vitest.config.ts
+├── env.d.ts
+├── AGENTS.md                     # AI agent guidelines
+└── LICENSE                       # GPL-3.0
+```
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE).

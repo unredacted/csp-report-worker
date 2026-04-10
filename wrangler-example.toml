@@ -1,0 +1,58 @@
+# Copy this file to wrangler.toml and fill in your values.
+# wrangler.toml is gitignored — do not commit real configuration.
+
+name = "csp-report-worker"
+main = "src/index.ts"
+compatibility_date = "2026-04-09"
+compatibility_flags = ["nodejs_compat"]
+
+# --- Environment Variables ---
+# These are non-secret configuration values.
+# For secrets (API_TOKEN), use: wrangler secret put API_TOKEN
+[vars]
+# Comma-separated list of email addresses to notify on new violations
+NOTIFY_EMAILS = ""
+
+# Comma-separated list of webhook URLs to POST to (Slack, Discord, etc.)
+NOTIFY_WEBHOOKS = ""
+
+# Minutes to suppress duplicate reports with the same fingerprint (default: 60)
+DEDUP_WINDOW_MINUTES = "60"
+
+# KV TTL in seconds for stored reports (default: 604800 = 7 days)
+KV_TTL_SECONDS = "604800"
+
+# Only accept reports from these origins (comma-separated). Empty = accept all.
+ALLOWED_ORIGINS = ""
+
+# Email sender address (required for all email providers)
+EMAIL_FROM = ""
+
+# Email provider: "cloudflare", "mailgun", "ses", or "resend" (empty = email disabled)
+EMAIL_PROVIDER = ""
+
+# --- Mailgun (if EMAIL_PROVIDER = "mailgun") ---
+MAILGUN_DOMAIN = ""
+MAILGUN_REGION = "us"
+# Secret: wrangler secret put MAILGUN_API_KEY
+
+# --- AWS SES (if EMAIL_PROVIDER = "ses") ---
+AWS_SES_REGION = "us-east-1"
+# Secrets: wrangler secret put AWS_SES_ACCESS_KEY_ID
+#          wrangler secret put AWS_SES_SECRET_ACCESS_KEY
+
+# --- Resend (if EMAIL_PROVIDER = "resend") ---
+# Secret: wrangler secret put RESEND_API_KEY
+
+# --- Bindings ---
+
+# KV namespace for report storage + dedup state
+# Create with: npx wrangler kv namespace create CSP_REPORTS
+[[kv_namespaces]]
+binding = "CSP_REPORTS"
+id = "<your-kv-namespace-id>"
+
+# Send Email binding — only needed if EMAIL_PROVIDER = "cloudflare"
+# Uncomment the lines below to enable Cloudflare Email Workers:
+# [[send_email]]
+# name = "EMAIL"

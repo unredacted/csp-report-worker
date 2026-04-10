@@ -1,0 +1,64 @@
+/**
+ * Configuration helpers — parse environment variables with defaults.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+import type { Env } from "./types";
+
+/** Minutes to suppress duplicate fingerprints (default: 60). */
+export function getDedupWindowMinutes(env: Env): number {
+  const val = parseInt(env.DEDUP_WINDOW_MINUTES, 10);
+  return Number.isFinite(val) && val > 0 ? val : 60;
+}
+
+/** TTL in seconds for stored reports (default: 604800 = 7 days). */
+export function getKvTtlSeconds(env: Env): number {
+  const val = parseInt(env.KV_TTL_SECONDS, 10);
+  return Number.isFinite(val) && val > 0 ? val : 604_800;
+}
+
+/** Allowed origins list, or null if unrestricted. */
+export function getAllowedOrigins(env: Env): string[] | null {
+  const raw = env.ALLOWED_ORIGINS?.trim();
+  if (!raw) return null;
+  return raw.split(",").map((o) => o.trim()).filter(Boolean);
+}
+
+/** Email recipient addresses. */
+export function getNotifyEmails(env: Env): string[] {
+  const raw = env.NOTIFY_EMAILS?.trim();
+  if (!raw) return [];
+  return raw.split(",").map((e) => e.trim()).filter(Boolean);
+}
+
+/** Webhook URLs to POST to. */
+export function getNotifyWebhooks(env: Env): string[] {
+  const raw = env.NOTIFY_WEBHOOKS?.trim();
+  if (!raw) return [];
+  return raw.split(",").map((u) => u.trim()).filter(Boolean);
+}
+
+/** Email "from" address. */
+export function getEmailFrom(env: Env): string {
+  return env.EMAIL_FROM?.trim() || "";
+}
+
+/** Supported email provider backends. */
+export type EmailProviderType = "cloudflare" | "mailgun" | "ses" | "resend";
+
+/** Active email provider, or null if email is disabled. */
+export function getEmailProvider(env: Env): EmailProviderType | null {
+  const val = env.EMAIL_PROVIDER?.trim().toLowerCase();
+  if (!val) return null;
+  const valid: EmailProviderType[] = ["cloudflare", "mailgun", "ses", "resend"];
+  if (valid.includes(val as EmailProviderType)) return val as EmailProviderType;
+  console.warn(`[config] Unknown EMAIL_PROVIDER "${val}" — email disabled`);
+  return null;
+}
+
+/** Maximum request body size in bytes (64 KB). */
+export const MAX_BODY_SIZE = 65_536;
+
+/** Inverted-timestamp ceiling for KV key ordering (year ~2286). */
+export const INVERTED_TS_CEILING = 9_999_999_999_999;
