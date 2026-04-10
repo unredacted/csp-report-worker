@@ -5,6 +5,7 @@
  */
 
 import type { Env } from "./types";
+import { getKvNamespace } from "./config";
 import { requireAuth } from "./auth";
 import { getReport, listReports } from "./store";
 
@@ -23,7 +24,8 @@ export async function handleListReports(
   const cursor = url.searchParams.get("cursor") || undefined;
   const directive = url.searchParams.get("directive") || undefined;
 
-  const result = await listReports(env.CSP_REPORTS, {
+  const kv = getKvNamespace(env);
+  const result = await listReports(kv, {
     limit: Number.isFinite(limit) ? limit : 50,
     cursor,
     directive,
@@ -46,7 +48,8 @@ export async function handleGetReport(
   const authError = requireAuth(request, env);
   if (authError) return authError;
 
-  const report = await getReport(env.CSP_REPORTS, id);
+  const kv = getKvNamespace(env);
+  const report = await getReport(kv, id);
 
   if (!report) {
     return new Response(

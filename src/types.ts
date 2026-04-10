@@ -9,8 +9,8 @@
 // ---------------------------------------------------------------------------
 
 export interface Env {
-  // KV namespace for report storage + dedup state
-  CSP_REPORTS: KVNamespace;
+  // Allow dynamic KV namespace bindings
+  [key: string]: unknown;
 
   // Cloudflare Send Email binding (optional — only needed for EMAIL_PROVIDER = "cloudflare")
   EMAIL?: SendEmail;

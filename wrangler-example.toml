@@ -62,12 +62,13 @@ id = "<your-kv-namespace-id>"
 # The domain must be on a Cloudflare zone in your account.
 #
 # Option 1: Custom domains (recommended) — Wrangler auto-creates the DNS record.
+# Uses bare hostname only (no wildcards or paths).
 # Uncomment and replace with your domain(s):
 # [[routes]]
-# pattern = "csp.yourdomain.com/*"
+# pattern = "csp.yourdomain.com"
 # custom_domain = true
 #
-# Option 2: Route patterns — map specific URL patterns on an existing zone.
+# Option 2: Route patterns — map URL patterns on an existing zone.
 # Requires a DNS record (e.g. AAAA 100::) to already exist for the hostname.
 # [[routes]]
 # pattern = "csp.yourdomain.com/*"

@@ -97,7 +97,7 @@ POST /report → parseRequest() → for each report:
 | `src/notify/provider.ts` | Email provider interface + factory | Lazy imports for inactive providers |
 | `src/auth.ts` | Bearer token validation | Constant-time comparison |
 | `src/api.ts` | GET endpoints | Always call `requireAuth()` first |
-| `src/config.ts` | Env var parsing | Provide safe defaults |
+| `src/config.ts` | Env var parsing + dynamic KV resolution | Provide safe defaults; locate KV automatically |
 | `src/types.ts` | Shared interfaces | Single source of truth for Env |
 
 ### KV Key Design

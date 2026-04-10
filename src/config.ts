@@ -62,3 +62,24 @@ export const MAX_BODY_SIZE = 65_536;
 
 /** Inverted-timestamp ceiling for KV key ordering (year ~2286). */
 export const INVERTED_TS_CEILING = 9_999_999_999_999;
+
+/**
+ * Dynamically locate the KV namespace binding.
+ * This avoids hardcoding "CSP_REPORTS" and scans the environment for
+ * the first property that implements the KVNamespace interface.
+ */
+export function getKvNamespace(env: Env): KVNamespace {
+  for (const key of Object.keys(env)) {
+    const val = env[key] as any;
+    if (
+      val &&
+      typeof val === "object" &&
+      typeof val.put === "function" &&
+      typeof val.get === "function" &&
+      typeof val.list === "function"
+    ) {
+      return val as KVNamespace;
+    }
+  }
+  throw new Error("No KV namespace binding found in the environment.");
+}

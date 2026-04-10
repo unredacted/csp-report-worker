@@ -8,7 +8,7 @@
  */
 
 import type { Env, NormalisedReport } from "./types";
-import { getAllowedOrigins, getDedupWindowMinutes, getKvTtlSeconds } from "./config";
+import { getAllowedOrigins, getDedupWindowMinutes, getKvNamespace, getKvTtlSeconds } from "./config";
 import { parseRequest } from "./ingest";
 import { computeFingerprint, isDuplicate, recordDedup } from "./dedup";
 import { storeReport } from "./store";
@@ -93,17 +93,18 @@ async function handleReportIngestion(
   // --- Process each report ---
   for (const report of reports) {
     // Always store the report regardless of dedup status
-    ctx.waitUntil(storeReport(env.CSP_REPORTS, report, kvTtl));
+    const fallbackKv = getKvNamespace(env);
+    ctx.waitUntil(storeReport(fallbackKv, report, kvTtl));
 
     // Check dedup and dispatch notifications for new violations
     ctx.waitUntil(
       (async () => {
         try {
           const fingerprint = await computeFingerprint(report);
-          const dupe = await isDuplicate(env.CSP_REPORTS, fingerprint);
+          const dupe = await isDuplicate(fallbackKv, fingerprint);
 
           // Record dedup entry (creates or increments)
-          await recordDedup(env.CSP_REPORTS, fingerprint, dedupWindow);
+          await recordDedup(fallbackKv, fingerprint, dedupWindow);
 
           if (!dupe) {
             // First occurrence — notify
