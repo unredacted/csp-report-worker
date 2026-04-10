@@ -106,7 +106,7 @@ describe("GET /reports", () => {
   it("should return stored reports", async () => {
     const ctx = mockCtx();
     const report = makeReport();
-    await storeReport(env.CSP_REPORTS, report, 600);
+    await storeReport(env.CSP_REPORTS as KVNamespace, report, 600);
 
     const req = new Request("https://worker.example.com/reports", {
       headers: { Authorization: `Bearer ${API_TOKEN}` },
@@ -136,7 +136,7 @@ describe("GET /reports/:id", () => {
   it("should return a stored report by ID", async () => {
     const ctx = mockCtx();
     const report = makeReport({ id: "aabbccddee" + Date.now().toString(16) });
-    await storeReport(env.CSP_REPORTS, report, 600);
+    await storeReport(env.CSP_REPORTS as KVNamespace, report, 600);
 
     const req = new Request(`https://worker.example.com/reports/${report.id}`, {
       headers: { Authorization: `Bearer ${API_TOKEN}` },

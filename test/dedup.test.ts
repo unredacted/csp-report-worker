@@ -81,24 +81,24 @@ describe("computeFingerprint", () => {
 describe("isDuplicate + recordDedup", () => {
   it("should return false for unseen fingerprint", async () => {
     const fp = "test-fingerprint-" + Date.now();
-    const result = await isDuplicate(env.CSP_REPORTS, fp);
+    const result = await isDuplicate(env.CSP_REPORTS as KVNamespace, fp);
     expect(result).toBe(false);
   });
 
   it("should return true after recording a fingerprint", async () => {
     const fp = "test-recorded-" + Date.now();
-    await recordDedup(env.CSP_REPORTS, fp, 60);
-    const result = await isDuplicate(env.CSP_REPORTS, fp);
+    await recordDedup(env.CSP_REPORTS as KVNamespace, fp, 60);
+    const result = await isDuplicate(env.CSP_REPORTS as KVNamespace, fp);
     expect(result).toBe(true);
   });
 
   it("should increment count on repeated records", async () => {
     const fp = "test-counting-" + Date.now();
-    await recordDedup(env.CSP_REPORTS, fp, 60);
-    await recordDedup(env.CSP_REPORTS, fp, 60);
-    await recordDedup(env.CSP_REPORTS, fp, 60);
+    await recordDedup(env.CSP_REPORTS as KVNamespace, fp, 60);
+    await recordDedup(env.CSP_REPORTS as KVNamespace, fp, 60);
+    await recordDedup(env.CSP_REPORTS as KVNamespace, fp, 60);
 
-    const raw = await env.CSP_REPORTS.get(`dedup:${fp}`, "json") as { count: number } | null;
+    const raw = await (env.CSP_REPORTS as KVNamespace).get(`dedup:${fp}`, "json") as { count: number } | null;
     expect(raw).not.toBeNull();
     expect(raw!.count).toBe(3);
   });
