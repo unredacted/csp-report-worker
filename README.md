@@ -83,7 +83,7 @@ By default the worker is available at `https://csp-report-worker.<your-subdomain
 
 ```toml
 [[routes]]
-pattern = "csp.yourdomain.com"
+pattern = "csp.yourdomain.com/*"
 custom_domain = true
 ```
 
@@ -325,4 +325,3 @@ csp-report-worker/
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
-  
