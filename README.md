@@ -16,7 +16,7 @@ A Cloudflare Worker that accepts [CSP violation reports](https://developer.mozil
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/youruser/csp-report-worker.git
+git clone https://github.com/unredacted/csp-report-worker.git
 cd csp-report-worker
 npm install
 ```
