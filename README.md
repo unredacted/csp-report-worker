@@ -72,21 +72,39 @@ This token is used to authenticate `GET /reports` API requests.
 npm run deploy
 ```
 
-### 7. Configure your CSP header
+### 7. Custom domain (optional)
 
-Point your site's CSP header at the worker:
+By default the worker is available at `https://csp-report-worker.<your-subdomain>.workers.dev`. To serve it on your own domain (e.g. `csp.yourdomain.com`):
+
+1. Ensure the domain is on a Cloudflare zone in your account
+2. Add a custom domain route in your `wrangler.toml`:
+
+```toml
+[[routes]]
+pattern = "csp.yourdomain.com/*"
+custom_domain = true
+```
+
+3. Redeploy with `npm run deploy` — Wrangler will automatically create the DNS record
+
+> **Tip:** You can also use route patterns if you prefer to manage DNS manually. See the examples in `wrangler-example.toml`.
+
+### 8. Configure your CSP header
+
+Point your site's CSP header at the worker (replace the URL with your custom domain or workers.dev address):
 
 ```
-Content-Security-Policy: default-src 'self'; script-src 'self'; report-uri https://your-worker.workers.dev/report
+Content-Security-Policy: default-src 'self'; script-src 'self'; report-uri https://csp.yourdomain.com/report
 ```
 
 For the modern Reporting API:
 
 ```
 Content-Security-Policy: default-src 'self'; script-src 'self'
-Reporting-Endpoints: csp-endpoint="https://your-worker.workers.dev/report"
+Reporting-Endpoints: csp-endpoint="https://csp.yourdomain.com/report"
 Content-Security-Policy: default-src 'self'; script-src 'self'; report-to csp-endpoint
 ```
+
 
 ## API Reference
 
