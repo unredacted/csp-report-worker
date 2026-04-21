@@ -8,7 +8,7 @@ A Cloudflare Worker that accepts [CSP violation reports](https://developer.mozil
 - **Deduplication** — SHA-256 fingerprint-based suppression window prevents notification floods from repeated violations
 - **KV storage** — all reports stored with configurable TTL, retrievable via authenticated API
 - **Webhook notifications** — fire-and-forget POST to Slack, Discord, or any HTTP endpoint
-- **Pluggable email providers** — send via Mailgun, AWS SES, Resend, or Cloudflare Email Workers
+- **Pluggable email providers** — send via Cloudflare Email Service, Cloudflare Email Routing, Mailgun, AWS SES, or Resend
 - **Edge-native** — runs entirely on Cloudflare's edge with no Node.js dependencies
 
 ## Quick Start
@@ -54,7 +54,7 @@ Edit your `wrangler.toml` to set notification targets:
 NOTIFY_EMAILS = "security@example.com,ops@example.com"
 NOTIFY_WEBHOOKS = "https://hooks.slack.com/services/T.../B.../xxx"
 EMAIL_FROM = "csp-reports@yourdomain.com"
-EMAIL_PROVIDER = "mailgun"  # or "ses", "resend", "cloudflare"
+EMAIL_PROVIDER = "mailgun"  # or "ses", "resend", "cloudflare-email", "cloudflare-routing"
 DEDUP_WINDOW_MINUTES = "60"
 KV_TTL_SECONDS = "604800"
 ALLOWED_ORIGINS = ""
@@ -185,10 +185,11 @@ The `EMAIL_PROVIDER` variable selects the email backend. Set it to one of:
 
 | Provider | `EMAIL_PROVIDER` | Required Vars | Required Secrets |
 |----------|-----------------|---------------|------------------|
+| **Cloudflare Email Service** | `cloudflare-email` | — | — (uses `[[send_email]]` binding) |
+| **Cloudflare Email Routing** | `cloudflare-routing` | — | — (uses `[[send_email]]` binding) |
 | **Mailgun** | `mailgun` | `MAILGUN_DOMAIN`, `MAILGUN_REGION` | `MAILGUN_API_KEY` |
 | **AWS SES** | `ses` | `AWS_SES_REGION` | `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY` |
 | **Resend** | `resend` | — | `RESEND_API_KEY` |
-| **Cloudflare** | `cloudflare` | — | — (uses `[[send_email]]` binding) |
 
 Leave `EMAIL_PROVIDER` empty to disable email notifications entirely.
 
@@ -252,15 +253,31 @@ Email is optional — set `EMAIL_PROVIDER` to enable it. All providers require `
    ```
 3. Set the API key secret: `wrangler secret put RESEND_API_KEY`
 
-### Cloudflare Email Workers
+### Cloudflare Email Service (recommended)
 
-Requires [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/) on the zone.
+Uses the `[[send_email]]` worker binding backed by Cloudflare's transactional Email Service — [docs](https://developers.cloudflare.com/email-service/get-started/send-emails/). Does **not** take over the zone's MX records, so it works alongside existing mail providers (Google Workspace, etc.).
+
+1. Onboard your sending domain to Email Service in the Cloudflare dashboard and publish the SPF/DKIM records it requests. Zone must use Cloudflare DNS.
+2. Uncomment the `[[send_email]]` binding in `wrangler.toml`:
+   ```toml
+   [[send_email]]
+   name = "EMAIL"
+   ```
+3. Set your vars:
+   ```toml
+   EMAIL_PROVIDER = "cloudflare-email"
+   EMAIL_FROM = "alerts@yourdomain.com"
+   ```
+
+### Cloudflare Email Routing (send_email binding)
+
+Uses the same `[[send_email]]` binding as Email Service, but wraps messages as raw MIME for delivery through [Email Routing](https://developers.cloudflare.com/email-routing/). Requires Email Routing enabled on the zone, which **claims the zone's MX records** — only use if the zone doesn't have existing email.
 
 1. Enable Email Routing and verify destination addresses
 2. Uncomment the `[[send_email]]` binding in `wrangler.toml`
 3. Set your vars:
    ```toml
-   EMAIL_PROVIDER = "cloudflare"
+   EMAIL_PROVIDER = "cloudflare-routing"
    ```
 
 ## Development

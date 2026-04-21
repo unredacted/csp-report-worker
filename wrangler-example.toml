@@ -28,8 +28,13 @@ ALLOWED_ORIGINS = ""
 # Email sender address (required for all email providers)
 EMAIL_FROM = ""
 
-# Email provider: "cloudflare", "mailgun", "ses", or "resend" (empty = email disabled)
+# Email provider: "cloudflare-email", "cloudflare-routing", "mailgun", "ses", or "resend" (empty = email disabled)
 EMAIL_PROVIDER = ""
+
+# --- Cloudflare Email Service (if EMAIL_PROVIDER = "cloudflare-email") ---
+# Uses the [[send_email]] binding below. Onboard your sending domain in the
+# Cloudflare dashboard. Does not take over the zone's MX records.
+# Docs: https://developers.cloudflare.com/email-service/get-started/send-emails/
 
 # --- Mailgun (if EMAIL_PROVIDER = "mailgun") ---
 MAILGUN_DOMAIN = ""
@@ -52,8 +57,9 @@ AWS_SES_REGION = "us-east-1"
 binding = "CSP_REPORTS"
 id = "<your-kv-namespace-id>"
 
-# Send Email binding — only needed if EMAIL_PROVIDER = "cloudflare"
-# Uncomment the lines below to enable Cloudflare Email Workers:
+# send_email binding — required for EMAIL_PROVIDER = "cloudflare-email"
+# (Email Service, structured payload) OR "cloudflare-routing" (Email Routing,
+# raw MIME). Uncomment to enable either one.
 # [[send_email]]
 # name = "EMAIL"
 
