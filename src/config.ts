@@ -45,13 +45,24 @@ export function getEmailFrom(env: Env): string {
 }
 
 /** Supported email provider backends. */
-export type EmailProviderType = "cloudflare" | "mailgun" | "ses" | "resend";
+export type EmailProviderType =
+  | "cloudflare-email"
+  | "cloudflare-routing"
+  | "mailgun"
+  | "ses"
+  | "resend";
 
 /** Active email provider, or null if email is disabled. */
 export function getEmailProvider(env: Env): EmailProviderType | null {
   const val = env.EMAIL_PROVIDER?.trim().toLowerCase();
   if (!val) return null;
-  const valid: EmailProviderType[] = ["cloudflare", "mailgun", "ses", "resend"];
+  const valid: EmailProviderType[] = [
+    "cloudflare-email",
+    "cloudflare-routing",
+    "mailgun",
+    "ses",
+    "resend",
+  ];
   if (valid.includes(val as EmailProviderType)) return val as EmailProviderType;
   console.warn(`[config] Unknown EMAIL_PROVIDER "${val}" — email disabled`);
   return null;
