@@ -58,20 +58,22 @@ EMAIL_PROVIDER = "mailgun"  # or "ses", "resend", "cloudflare-email", "cloudflar
 DEDUP_WINDOW_MINUTES = "60"
 KV_TTL_SECONDS = "604800"
 ALLOWED_ORIGINS = ""
-MUTE_BLOCKED_URI_PREFIXES = ""  # empty = mute browser-extension noise from notifications (default)
+MUTE_CATEGORIES = ""  # empty = mute extension + browser-internal noise from notifications (default)
 ```
 
 #### Muting browser-extension noise from notifications
 
-By default, the worker **stores every report** but **suppresses email/webhook notifications** for reports whose `blockedUri` starts with a browser-extension or browser-internal scheme (`chrome-extension://`, `moz-extension://`, `safari-web-extension://`, `safari-extension://`, `webkit-masked-url://`, `chrome://`, `about:`). These reports are caused by user-installed browser extensions: they don't indicate a problem with the site itself, but they are useful as a passive log of visitor browser behaviour and remain available for forensic review through the API.
+By default, the worker **stores every report** but **suppresses email/webhook notifications** for reports in the `extension` or `browser-internal` category. Each report is classified at ingestion using both `blockedUri` *and* `sourceFile`, so an extension-injected script reaching a legitimate-looking external host is still correctly identified as an extension report. These reports are still useful as a passive log of visitor browser behaviour and remain available for forensic review through the API.
 
-Configure the mute list with `MUTE_BLOCKED_URI_PREFIXES`:
+Configure the mute list with `MUTE_CATEGORIES`:
 
 | Value | Behavior |
 |-------|----------|
-| Unset / empty | Use the built-in defaults above. |
+| Unset / empty | Use the built-in defaults: `extension`, `browser-internal`. |
 | `"none"` | Disable muting entirely — every report fires notifications. |
-| `"prefix1,prefix2,..."` | Replace the default list with this explicit list. The operator takes full responsibility for what's muted. |
+| `"cat1,cat2,..."` | Replace the default list with this explicit list. |
+
+Valid categories: `extension`, `browser-internal`, `inline`, `data`, `blob`, `eval`, `same-origin`, `external`, `unknown`.
 
 Muted reports are still:
 - stored in KV,
@@ -80,7 +82,7 @@ Muted reports are still:
 
 Only the email/webhook dispatch is suppressed.
 
-`data:`, `blob:`, the literal `inline`, and `eval` are deliberately **not** in the default list — each can carry real XSS signal. If you want to mute them on a specific deployment, add them to `MUTE_BLOCKED_URI_PREFIXES`.
+`inline`, `eval`, `data`, `blob`, `same-origin`, and `external` are deliberately **not** in the default mute list — each can carry real signal.
 
 ### 5. Set the API token (secret)
 

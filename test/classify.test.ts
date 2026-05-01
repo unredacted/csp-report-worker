@@ -84,6 +84,62 @@ describe("classifyReport", () => {
       expect(c.category).toBe("extension");
     });
   });
+
+  describe("sourceFile attribution — extension-injected scripts hitting external hosts", () => {
+    // The case the dashboard caught: blockedUri is a perfectly normal
+    // wss://walletlink.org/rpc, but the script that initiated the
+    // connection came from a Chrome extension. That's still extension noise
+    // and must be muted.
+    it("extension sourceFile + external blockedUri => 'extension'", () => {
+      const c = classifyReport(
+        "wss://www.walletlink.org/rpc",
+        DOC,
+        "chrome-extension://abc/inject.js",
+      );
+      expect(c.category).toBe("extension");
+    });
+
+    it("Chrome's redacted source format (no //) is recognised", () => {
+      const c = classifyReport(
+        "wss://www.walletlink.org/rpc",
+        DOC,
+        "chrome-extension:2:248774",
+      );
+      expect(c.category).toBe("extension");
+    });
+
+    it("moz-extension sourceFile is recognised", () => {
+      const c = classifyReport(
+        "https://api.example.com/x",
+        DOC,
+        "moz-extension://abcd-1234/content.js",
+      );
+      expect(c.category).toBe("extension");
+    });
+
+    it("browser-internal sourceFile is recognised", () => {
+      const c = classifyReport(
+        "https://api.example.com/x",
+        DOC,
+        "chrome://newtab/script.js",
+      );
+      expect(c.category).toBe("browser-internal");
+    });
+
+    it("legitimate page sourceFile keeps the URL-based classification", () => {
+      const c = classifyReport(
+        "https://evil.example/x.js",
+        DOC,
+        "https://example.com/main.js",
+      );
+      expect(c.category).toBe("external");
+    });
+
+    it("absent sourceFile leaves blockedUri-based classification intact", () => {
+      const c = classifyReport("https://evil.example/x.js", DOC);
+      expect(c.category).toBe("external");
+    });
+  });
 });
 
 describe("isReportCategory", () => {

@@ -29,11 +29,17 @@ import type { NormalisedReport, ListReportsResponse } from "./types";
  */
 function backfillReport(r: NormalisedReport): NormalisedReport {
   let migrated = r;
-  if (!migrated.category) {
-    migrated = {
-      ...migrated,
-      category: classifyReport(migrated.blockedUri, migrated.documentUri).category,
-    };
+  // Reclassify if the stored category is missing OR was assigned by an
+  // earlier classifier that didn't consider sourceFile. Re-running the
+  // classifier is cheap and handles both the schema-migration case and
+  // the corrected-classification case in one pass.
+  const correct = classifyReport(
+    migrated.blockedUri,
+    migrated.documentUri,
+    migrated.sourceFile,
+  ).category;
+  if (migrated.category !== correct) {
+    migrated = { ...migrated, category: correct };
   }
   if (!migrated.violatedDirective && migrated.effectiveDirective) {
     migrated = { ...migrated, violatedDirective: migrated.effectiveDirective };

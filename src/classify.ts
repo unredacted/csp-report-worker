@@ -29,32 +29,56 @@ export interface ReportClassification {
   hostname: string | null;
 }
 
+/**
+ * Prefixes that identify an extension-origin URI. The trailing colon (no
+ * slashes) intentionally catches both forms a browser may emit:
+ *   - full URL form, e.g. "chrome-extension://EXTID/script.js"
+ *   - redacted form Chrome uses for some reports, e.g. "chrome-extension:2:248774"
+ *     (the ID is stripped for privacy; what's left is `scheme:LINE:COL`)
+ */
 const EXTENSION_PREFIXES = [
-  "chrome-extension://",
-  "moz-extension://",
-  "safari-web-extension://",
-  "safari-extension://",
-  "webkit-masked-url://",
+  "chrome-extension:",
+  "moz-extension:",
+  "safari-web-extension:",
+  "safari-extension:",
+  "webkit-masked-url:",
 ];
 
 const BROWSER_INTERNAL_PREFIXES = ["chrome://", "about:"];
 
+function hasPrefix(uri: string, prefixes: readonly string[]): boolean {
+  if (!uri) return false;
+  return prefixes.some((p) => uri.startsWith(p));
+}
+
 /**
- * Classify a `blockedUri` relative to its `documentUri`.
+ * Classify a CSP report by source.
  *
- * Order of detection matters: extension and browser-internal schemes are
- * checked first so they are never mis-bucketed as "external".
+ * Both `blockedUri` (the URL that was blocked) and `sourceFile` (the JS file
+ * that triggered the violation) are inspected. A violation is "extension"
+ * when EITHER side is an extension URI — most extension noise actually shows
+ * up as `blockedUri` being a legitimate external host while `sourceFile` is
+ * a `chrome-extension:` URL, because the extension-injected script tried to
+ * reach a normal endpoint.
+ *
+ * Order matters: extension/browser-internal checks run before host parsing
+ * so URIs in those schemes never fall through to "external".
  */
 export function classifyReport(
   blockedUri: string,
   documentUri: string,
+  sourceFile?: string,
 ): ReportClassification {
   const raw = (blockedUri || "").trim();
+  const src = (sourceFile || "").trim();
 
-  if (EXTENSION_PREFIXES.some((p) => raw.startsWith(p))) {
+  if (hasPrefix(raw, EXTENSION_PREFIXES) || hasPrefix(src, EXTENSION_PREFIXES)) {
     return { category: "extension", label: "browser extension", hostname: null };
   }
-  if (BROWSER_INTERNAL_PREFIXES.some((p) => raw.startsWith(p))) {
+  if (
+    hasPrefix(raw, BROWSER_INTERNAL_PREFIXES) ||
+    hasPrefix(src, BROWSER_INTERNAL_PREFIXES)
+  ) {
     return { category: "browser-internal", label: "browser-internal", hostname: null };
   }
   if (raw === "" || raw.toLowerCase() === "inline") {

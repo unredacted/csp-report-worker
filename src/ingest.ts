@@ -142,6 +142,7 @@ async function normaliseLegacy(
 ): Promise<NormalisedReport> {
   const documentUri = body["document-uri"] || "";
   const blockedUri = body["blocked-uri"] || "";
+  const sourceFile = body["source-file"] || "";
   const partial = {
     timestamp,
     documentUri,
@@ -151,13 +152,13 @@ async function normaliseLegacy(
     originalPolicy: body["original-policy"] || "",
     disposition: normaliseDisposition(body.disposition),
     referrer: body.referrer || "",
-    sourceFile: body["source-file"] || "",
+    sourceFile,
     lineNumber: body["line-number"] || 0,
     columnNumber: body["column-number"] || 0,
     statusCode: body["status-code"] || 0,
     userAgent,
     sourceFormat: "report-uri" as const,
-    category: classifyReport(blockedUri, documentUri).category,
+    category: classifyReport(blockedUri, documentUri, sourceFile).category,
   };
 
   const id = await computeReportId(partial);
@@ -171,6 +172,7 @@ async function normaliseReportingApi(
 ): Promise<NormalisedReport> {
   const documentUri = body.documentURL || body["document-uri"] || "";
   const blockedUri = body.blockedURL || body["blocked-uri"] || "";
+  const sourceFile = body.sourceFile || "";
   const partial = {
     timestamp,
     documentUri,
@@ -180,13 +182,13 @@ async function normaliseReportingApi(
     originalPolicy: body.originalPolicy || "",
     disposition: normaliseDisposition(body.disposition),
     referrer: body.referrer || "",
-    sourceFile: body.sourceFile || "",
+    sourceFile,
     lineNumber: body.lineNumber || 0,
     columnNumber: body.columnNumber || 0,
     statusCode: body.statusCode || 0,
     userAgent,
     sourceFormat: "report-to" as const,
-    category: classifyReport(blockedUri, documentUri).category,
+    category: classifyReport(blockedUri, documentUri, sourceFile).category,
   };
 
   const id = await computeReportId(partial);

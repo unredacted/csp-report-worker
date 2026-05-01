@@ -69,36 +69,31 @@ export function getEmailProvider(env: Env): EmailProviderType | null {
 }
 
 /**
- * Default `blockedUri` prefixes whose reports are stored but do NOT trigger
- * email/webhook notifications. Browser-extension and browser-internal sources
- * have no security signal under typical attacker models, but the reports
- * themselves are still useful as a passive monitoring log of visitor browser
- * behaviour — so they are kept in KV and queryable via the API.
+ * Default report categories whose reports are stored but do NOT trigger
+ * email/webhook notifications. Browser-extension and browser-internal
+ * sources have no security signal under typical attacker models, but the
+ * reports themselves remain useful as a passive monitoring log and stay
+ * queryable via the API.
  *
- * Notable exclusions: `data:`, `blob:`, the literal `inline`, and `eval` are
- * NOT in the default mute list — each can carry real XSS signal.
+ * Notable exclusions: `inline`, `eval`, `data`, `blob`, `same-origin`, and
+ * `external` are NOT in the default mute list — each can carry real signal.
  */
-export const DEFAULT_MUTED_URI_PREFIXES: readonly string[] = [
-  "chrome-extension://",
-  "moz-extension://",
-  "safari-web-extension://",
-  "safari-extension://",
-  "webkit-masked-url://",
-  "chrome://",
-  "about:",
+export const DEFAULT_MUTED_CATEGORIES: readonly string[] = [
+  "extension",
+  "browser-internal",
 ];
 
 /**
- * Resolve the list of `blockedUri` prefixes whose reports should be muted
- * (stored, but not notified about).
+ * Resolve the list of categories whose reports should be muted (stored,
+ * but not notified about).
  *
- * - Unset/empty: use `DEFAULT_MUTED_URI_PREFIXES`.
+ * - Unset/empty: use `DEFAULT_MUTED_CATEGORIES`.
  * - `"none"` (case-insensitive): empty list — every report fires notifications.
  * - Comma-separated string: explicit list, replaces the default.
  */
-export function getMutedBlockedUriPrefixes(env: Env): readonly string[] {
-  const raw = env.MUTE_BLOCKED_URI_PREFIXES?.trim();
-  if (!raw) return DEFAULT_MUTED_URI_PREFIXES;
+export function getMutedCategories(env: Env): readonly string[] {
+  const raw = env.MUTE_CATEGORIES?.trim();
+  if (!raw) return DEFAULT_MUTED_CATEGORIES;
   if (raw.toLowerCase() === "none") return [];
   return raw.split(",").map((p) => p.trim()).filter(Boolean);
 }

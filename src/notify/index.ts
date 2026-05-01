@@ -5,23 +5,26 @@
  */
 
 import type { Env, NormalisedReport } from "../types";
-import { getMutedBlockedUriPrefixes, getNotifyWebhooks } from "../config";
+import { getMutedCategories, getNotifyWebhooks } from "../config";
 import { sendWebhooks } from "./webhook";
 import { sendEmails } from "./email";
 
 /**
  * Decide whether a CSP report should fire email/webhook notifications.
  *
- * Reports whose `blockedUri` matches the configured mute prefixes are still
- * stored in KV and counted in dedup state, but they do not page operators.
- * This keeps the report log complete for forensic review while keeping
- * inboxes focused on signals worth reading.
+ * Reports whose `category` is in the configured mute set are still stored
+ * in KV and counted in dedup state, but they do not page operators. This
+ * keeps the report log complete for forensic review while keeping inboxes
+ * focused on signals worth reading.
+ *
+ * Categorisation considers both `blockedUri` and `sourceFile`, so a violation
+ * triggered by an extension-injected script that targets a legitimate-looking
+ * external host is still correctly identified as an extension report and muted.
  */
 export function shouldNotify(env: Env, report: NormalisedReport): boolean {
-  const prefixes = getMutedBlockedUriPrefixes(env);
-  if (prefixes.length === 0) return true;
-  if (!report.blockedUri) return true;
-  return !prefixes.some((p) => report.blockedUri.startsWith(p));
+  const muted = getMutedCategories(env);
+  if (muted.length === 0) return true;
+  return !muted.includes(report.category);
 }
 
 /**

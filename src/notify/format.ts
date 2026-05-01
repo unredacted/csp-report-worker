@@ -11,7 +11,7 @@ import { classifyReport } from "../classify";
  * Format a report as a plain text email body.
  */
 export function formatPlainText(report: NormalisedReport, workerUrl: string): string {
-  const classification = classifyReport(report.blockedUri, report.documentUri);
+  const classification = classifyReport(report.blockedUri, report.documentUri, report.sourceFile);
   const lines = [
     "CSP Violation Report",
     "====================",
@@ -51,7 +51,7 @@ export function formatHtml(report: NormalisedReport, workerUrl: string): string 
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-  const classification = classifyReport(report.blockedUri, report.documentUri);
+  const classification = classifyReport(report.blockedUri, report.documentUri, report.sourceFile);
   const directive = report.violatedDirective || "(unknown directive)";
   const effective = report.effectiveDirective || "(unknown directive)";
 
@@ -123,7 +123,7 @@ export function formatHtml(report: NormalisedReport, workerUrl: string): string 
  */
 export function formatSubject(report: NormalisedReport): string {
   const directive = report.violatedDirective || "(unknown directive)";
-  const classification = classifyReport(report.blockedUri, report.documentUri);
+  const classification = classifyReport(report.blockedUri, report.documentUri, report.sourceFile);
 
   let docUri = report.documentUri;
   try {
