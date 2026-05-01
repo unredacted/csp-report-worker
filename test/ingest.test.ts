@@ -194,6 +194,111 @@ describe("parseRequest", () => {
     });
   });
 
+  describe("directive fallback (regression — violatedDirective blank in modern Reporting API)", () => {
+    it("should fall back to effectiveDirective when only effectiveDirective is sent (Reporting API)", async () => {
+      const body = [
+        {
+          type: "csp-violation",
+          age: 0,
+          url: "https://example.com/page",
+          user_agent: "Mozilla/5.0",
+          body: {
+            documentURL: "https://example.com/page",
+            blockedURL: "https://evil.example/script.js",
+            // Modern Chromium/Firefox often only send effectiveDirective
+            effectiveDirective: "script-src-elem",
+            originalPolicy: "script-src 'self'",
+            disposition: "enforce",
+            referrer: "",
+            sourceFile: "https://example.com/page",
+            lineNumber: 1,
+            columnNumber: 1,
+            statusCode: 200,
+          },
+        },
+      ];
+      const req = makeRequest(body, "application/reports+json");
+      const [r] = await parseRequest(req);
+      expect(r!.violatedDirective).toBe("script-src-elem");
+      expect(r!.effectiveDirective).toBe("script-src-elem");
+    });
+
+    it("should fall back to violatedDirective when only violatedDirective is sent (Reporting API)", async () => {
+      const body = [
+        {
+          type: "csp-violation",
+          age: 0,
+          url: "https://example.com/page",
+          user_agent: "Mozilla/5.0",
+          body: {
+            documentURL: "https://example.com/page",
+            blockedURL: "https://evil.example/script.js",
+            violatedDirective: "script-src",
+            originalPolicy: "script-src 'self'",
+            disposition: "enforce",
+            referrer: "",
+            sourceFile: "https://example.com/page",
+            lineNumber: 1,
+            columnNumber: 1,
+            statusCode: 200,
+          },
+        },
+      ];
+      const req = makeRequest(body, "application/reports+json");
+      const [r] = await parseRequest(req);
+      expect(r!.violatedDirective).toBe("script-src");
+      expect(r!.effectiveDirective).toBe("script-src");
+    });
+
+    it("should preserve both fields independently when both are sent (Reporting API)", async () => {
+      const body = [
+        {
+          type: "csp-violation",
+          age: 0,
+          url: "https://example.com/page",
+          user_agent: "Mozilla/5.0",
+          body: {
+            documentURL: "https://example.com/page",
+            blockedURL: "https://evil.example/script.js",
+            violatedDirective: "script-src",
+            effectiveDirective: "script-src-elem",
+            originalPolicy: "script-src 'self'",
+            disposition: "enforce",
+            referrer: "",
+            sourceFile: "https://example.com/page",
+            lineNumber: 1,
+            columnNumber: 1,
+            statusCode: 200,
+          },
+        },
+      ];
+      const req = makeRequest(body, "application/reports+json");
+      const [r] = await parseRequest(req);
+      expect(r!.violatedDirective).toBe("script-src");
+      expect(r!.effectiveDirective).toBe("script-src-elem");
+    });
+
+    it("should fall back to effective-directive when only effective-directive is sent (legacy)", async () => {
+      const body = {
+        "csp-report": {
+          "document-uri": "https://example.com/page",
+          "blocked-uri": "https://evil.example/script.js",
+          "effective-directive": "script-src-elem",
+          "original-policy": "script-src 'self'",
+          disposition: "enforce",
+          "source-file": "https://example.com/page",
+          "line-number": 1,
+          "column-number": 1,
+          "status-code": 200,
+        },
+      };
+      const req = makeRequest(body, "application/csp-report");
+      const [r] = await parseRequest(req);
+      expect(r!.violatedDirective).toBe("script-src-elem");
+      expect(r!.effectiveDirective).toBe("script-src-elem");
+    });
+  });
+
   describe("disposition normalisation", () => {
     it("should default to enforce for unknown dispositions", async () => {
       const body = {
