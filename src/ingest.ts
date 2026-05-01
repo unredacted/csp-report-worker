@@ -7,14 +7,24 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { MAX_BODY_SIZE } from "./config";
+import { MAX_BODY_SIZE, getIgnoredBlockedUriPrefixes } from "./config";
 import type {
+  Env,
   NormalisedReport,
   LegacyCspReportEnvelope,
   LegacyCspReportBody,
   ReportingApiEntry,
   ReportingApiBody,
 } from "./types";
+
+/**
+ * Decide whether a normalised report's `blockedUri` matches any of the
+ * configured noise prefixes. An empty prefix list disables filtering.
+ */
+function isNoise(blockedUri: string, prefixes: readonly string[]): boolean {
+  if (!blockedUri || prefixes.length === 0) return false;
+  return prefixes.some((p) => blockedUri.startsWith(p));
+}
 
 /**
  * Compute a deterministic SHA-256 ID for a report based on its content.
@@ -42,9 +52,16 @@ async function computeReportId(report: Omit<NormalisedReport, "id">): Promise<st
 /**
  * Parse an incoming request and return normalised report(s).
  *
+ * Reports whose `blockedUri` matches the configured noise prefixes
+ * (see `getIgnoredBlockedUriPrefixes`) are dropped after normalisation —
+ * an all-noise payload returns an empty array, not an error.
+ *
  * @throws {Response} if the request is malformed or too large.
  */
-export async function parseRequest(request: Request): Promise<NormalisedReport[]> {
+export async function parseRequest(
+  request: Request,
+  env: Env,
+): Promise<NormalisedReport[]> {
   // --- Size check ---
   const contentLength = request.headers.get("content-length");
   if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
@@ -72,38 +89,50 @@ export async function parseRequest(request: Request): Promise<NormalisedReport[]
   const userAgent = request.headers.get("user-agent") || "";
   const timestamp = new Date().toISOString();
 
+  let reports: NormalisedReport[];
+
   // --- Reporting API v1: application/reports+json ---
   if (contentType.includes("application/reports+json")) {
     if (!Array.isArray(parsed)) {
       throw new Response("Expected JSON array for Reporting API format", { status: 400 });
     }
-    return parseReportingApiArray(parsed as ReportingApiEntry[], userAgent, timestamp);
+    reports = await parseReportingApiArray(parsed as ReportingApiEntry[], userAgent, timestamp);
   }
-
   // --- Legacy report-uri: application/csp-report ---
-  if (contentType.includes("application/csp-report")) {
+  else if (contentType.includes("application/csp-report")) {
     const envelope = parsed as LegacyCspReportEnvelope;
     const body = envelope["csp-report"];
     if (!body || typeof body !== "object") {
       throw new Response('Missing "csp-report" key in body', { status: 400 });
     }
-    const report = await normaliseLegacy(body, userAgent, timestamp);
-    return [report];
+    reports = [await normaliseLegacy(body, userAgent, timestamp)];
   }
-
   // --- Fallback: try to auto-detect ---
-  if (Array.isArray(parsed)) {
-    return parseReportingApiArray(parsed as ReportingApiEntry[], userAgent, timestamp);
-  }
-  if (typeof parsed === "object" && parsed !== null && "csp-report" in parsed) {
+  else if (Array.isArray(parsed)) {
+    reports = await parseReportingApiArray(parsed as ReportingApiEntry[], userAgent, timestamp);
+  } else if (typeof parsed === "object" && parsed !== null && "csp-report" in parsed) {
     const body = (parsed as LegacyCspReportEnvelope)["csp-report"];
-    if (body && typeof body === "object") {
-      const report = await normaliseLegacy(body, userAgent, timestamp);
-      return [report];
+    if (!body || typeof body !== "object") {
+      throw new Response("Unrecognised report format", { status: 400 });
     }
+    reports = [await normaliseLegacy(body, userAgent, timestamp)];
+  } else {
+    throw new Response("Unrecognised report format", { status: 400 });
   }
 
-  throw new Response("Unrecognised report format", { status: 400 });
+  // --- Drop noise ---
+  const noisePrefixes = getIgnoredBlockedUriPrefixes(env);
+  if (noisePrefixes.length === 0) return reports;
+
+  const kept: NormalisedReport[] = [];
+  for (const r of reports) {
+    if (isNoise(r.blockedUri, noisePrefixes)) {
+      console.log("[ingest] dropping noise:", r.blockedUri);
+      continue;
+    }
+    kept.push(r);
+  }
+  return kept;
 }
 
 // ---------------------------------------------------------------------------

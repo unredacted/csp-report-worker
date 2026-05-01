@@ -57,6 +57,39 @@ export function getEmailProvider(env: Env): EmailProviderType | null {
   return null;
 }
 
+/**
+ * Default `blockedUri` prefixes treated as noise and dropped at ingestion.
+ * These are universally non-actionable: browser extensions and browser-internal
+ * resources have no security signal value and only inflate KV writes and
+ * notification volume.
+ *
+ * Notable exclusions: `data:`, `blob:`, `inline`, and `eval` are kept because
+ * they carry real XSS-related signal.
+ */
+export const DEFAULT_NOISE_URI_PREFIXES: readonly string[] = [
+  "chrome-extension://",
+  "moz-extension://",
+  "safari-web-extension://",
+  "safari-extension://",
+  "webkit-masked-url://",
+  "chrome://",
+  "about:",
+];
+
+/**
+ * Resolve the list of `blockedUri` prefixes that should be dropped at ingestion.
+ *
+ * - Unset/empty: use `DEFAULT_NOISE_URI_PREFIXES`.
+ * - `"none"` (case-insensitive): empty list — disables filtering entirely.
+ * - Comma-separated string: explicit list, replaces the default.
+ */
+export function getIgnoredBlockedUriPrefixes(env: Env): readonly string[] {
+  const raw = env.IGNORE_BLOCKED_URI_PREFIXES?.trim();
+  if (!raw) return DEFAULT_NOISE_URI_PREFIXES;
+  if (raw.toLowerCase() === "none") return [];
+  return raw.split(",").map((p) => p.trim()).filter(Boolean);
+}
+
 /** Maximum request body size in bytes (64 KB). */
 export const MAX_BODY_SIZE = 65_536;
 

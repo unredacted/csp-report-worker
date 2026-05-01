@@ -196,6 +196,73 @@ describe("POST /report", () => {
     expect(res.headers.get("Access-Control-Allow-Headers")).toContain("Content-Type");
     expect(res.headers.get("Access-Control-Max-Age")).toBe("86400");
   });
+
+  it("returns 204 and stores nothing for an extension-noise report", async () => {
+    const kv = env.CSP_REPORTS as KVNamespace;
+    const before = await kv.list({ prefix: "report:" });
+    const beforeCount = before.keys.length;
+
+    const ctx = mockCtx();
+    const req = new Request("https://worker.example.com/report", {
+      method: "POST",
+      headers: { "Content-Type": "application/csp-report" },
+      body: JSON.stringify({
+        "csp-report": {
+          "document-uri": "https://example.com/",
+          "blocked-uri": "chrome-extension://abcdef/inject.js",
+          "violated-directive": "script-src",
+        },
+      }),
+    });
+    const res = await worker.fetch(req, testEnv(), ctx);
+    await ctx.flush();
+    expect(res.status).toBe(204);
+
+    const after = await kv.list({ prefix: "report:" });
+    expect(after.keys.length).toBe(beforeCount);
+  });
+
+  it("returns 204 (not 400) for an all-noise Reporting API array", async () => {
+    const kv = env.CSP_REPORTS as KVNamespace;
+    const before = await kv.list({ prefix: "report:" });
+    const beforeCount = before.keys.length;
+
+    const ctx = mockCtx();
+    const req = new Request("https://worker.example.com/report", {
+      method: "POST",
+      headers: { "Content-Type": "application/reports+json" },
+      body: JSON.stringify([
+        {
+          type: "csp-violation",
+          age: 0,
+          url: "https://example.com/",
+          user_agent: "Mozilla/5.0",
+          body: {
+            documentURL: "https://example.com/",
+            blockedURL: "moz-extension://abc/x.js",
+            effectiveDirective: "script-src",
+          },
+        },
+        {
+          type: "csp-violation",
+          age: 0,
+          url: "https://example.com/",
+          user_agent: "Mozilla/5.0",
+          body: {
+            documentURL: "https://example.com/",
+            blockedURL: "chrome-extension://def/y.js",
+            effectiveDirective: "script-src",
+          },
+        },
+      ]),
+    });
+    const res = await worker.fetch(req, testEnv(), ctx);
+    await ctx.flush();
+    expect(res.status).toBe(204);
+
+    const after = await kv.list({ prefix: "report:" });
+    expect(after.keys.length).toBe(beforeCount);
+  });
 });
 
 describe("404 fallback", () => {

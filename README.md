@@ -58,7 +58,24 @@ EMAIL_PROVIDER = "mailgun"  # or "ses", "resend", "cloudflare"
 DEDUP_WINDOW_MINUTES = "60"
 KV_TTL_SECONDS = "604800"
 ALLOWED_ORIGINS = ""
+IGNORE_BLOCKED_URI_PREFIXES = ""  # empty = filter browser-extension noise (default)
 ```
+
+#### Filtering browser-extension noise
+
+By default, the worker drops reports whose `blockedUri` starts with a browser-extension or browser-internal scheme (`chrome-extension://`, `moz-extension://`, `safari-web-extension://`, `safari-extension://`, `webkit-masked-url://`, `chrome://`, `about:`). These are caused by user-installed browser extensions and have no security-signal value, but at scale they account for the majority of reports a public site receives.
+
+Configure the filter with `IGNORE_BLOCKED_URI_PREFIXES`:
+
+| Value | Behavior |
+|-------|----------|
+| Unset / empty | Use the built-in defaults above. |
+| `"none"` | Disable filtering entirely — every report is stored. |
+| `"prefix1,prefix2,..."` | Replace the default list with this explicit list. The operator takes full responsibility for what's filtered. |
+
+Filtered reports are dropped at ingestion: no KV write, no notification, no dedup entry. Each drop is logged at `[ingest] dropping noise: <blockedUri>` so you can confirm volume via `wrangler tail` or Logpush.
+
+`data:`, `blob:`, the literal `inline`, and `eval` are deliberately **not** in the default list — they can carry real XSS signal. If you do want to filter them on a specific deployment, add them to `IGNORE_BLOCKED_URI_PREFIXES`.
 
 ### 5. Set the API token (secret)
 

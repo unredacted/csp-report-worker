@@ -75,7 +75,7 @@ async function handleReportIngestion(
   // --- Parse + normalise ---
   let reports: NormalisedReport[];
   try {
-    reports = await parseRequest(request);
+    reports = await parseRequest(request, env);
   } catch (err) {
     if (err instanceof Response) return addCorsHeaders(err, request, env);
     console.error("[ingest] Unexpected parse error:", err);

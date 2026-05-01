@@ -22,6 +22,7 @@ export interface Env {
   KV_TTL_SECONDS: string;
   ALLOWED_ORIGINS: string;
   EMAIL_FROM: string;
+  IGNORE_BLOCKED_URI_PREFIXES?: string;
 
   // --- Email provider selection ---
   // "cloudflare" | "mailgun" | "ses" | "resend" (empty = email disabled)
