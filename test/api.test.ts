@@ -165,6 +165,49 @@ describe("GET /reports?category=", () => {
     expect(res.status).toBe(400);
   });
 
+  it("accepts a comma-separated category list and includes any that match", async () => {
+    const ctx = mockCtx();
+    const ext = makeReport({
+      id: "ee" + Date.now().toString(16) + "ccc333",
+      blockedUri: "chrome-extension://abc/x.js",
+      category: "extension",
+    });
+    const inline = makeReport({
+      id: "ee" + Date.now().toString(16) + "ccc444",
+      blockedUri: "inline",
+      category: "inline",
+    });
+    const ext2 = makeReport({
+      id: "ee" + Date.now().toString(16) + "ccc555",
+      blockedUri: "https://anywhere.example/x.js",
+      sourceFile: "moz-extension://e/x.js",
+      category: "extension",
+    });
+    const noise = makeReport({
+      id: "ee" + Date.now().toString(16) + "ccc666",
+      blockedUri: "https://evil.example/x.js",
+      category: "external",
+    });
+    const kv = getKvNamespace(env as unknown as Env);
+    await storeReport(kv, ext, 600);
+    await storeReport(kv, inline, 600);
+    await storeReport(kv, ext2, 600);
+    await storeReport(kv, noise, 600);
+
+    const req = new Request(
+      "https://worker.example.com/reports?category=extension,inline&limit=200",
+      { headers: { Authorization: `Bearer ${API_TOKEN}` } },
+    );
+    const res = await worker.fetch(req, testEnv(), ctx);
+    await ctx.flush();
+    const body = (await res.json()) as { reports: NormalisedReport[] };
+    const ids = body.reports.map((r) => r.id);
+    expect(ids).toContain(ext.id);
+    expect(ids).toContain(ext2.id);
+    expect(ids).toContain(inline.id);
+    expect(ids).not.toContain(noise.id);
+  });
+
   it("filters listings by category", async () => {
     const ctx = mockCtx();
     const ext = makeReport({

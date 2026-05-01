@@ -98,6 +98,9 @@ export async function getReport(
 
 /**
  * List recent reports with optional filtering and pagination.
+ *
+ * `categories` is treated as an inclusive set: a report is kept if its
+ * category is in the set. An empty/undefined set means "no category filter".
  */
 export async function listReports(
   kv: KVNamespace,
@@ -105,14 +108,16 @@ export async function listReports(
     limit?: number;
     cursor?: string;
     directive?: string;
-    category?: ReportCategory;
+    categories?: readonly ReportCategory[];
   } = {},
 ): Promise<ListReportsResponse> {
   const requestLimit = Math.min(Math.max(options.limit || 50, 1), 200);
 
   // We may need to over-fetch if any filter is applied, since KV
   // doesn't support value-based filtering natively.
-  const hasFilter = Boolean(options.directive || options.category);
+  const hasFilter = Boolean(
+    options.directive || (options.categories && options.categories.length > 0),
+  );
   const fetchLimit = hasFilter ? requestLimit * 3 : requestLimit;
 
   const listResult = await kv.list({
@@ -120,6 +125,10 @@ export async function listReports(
     limit: Math.min(fetchLimit, 1000),
     cursor: options.cursor || undefined,
   });
+
+  const categorySet = options.categories && options.categories.length > 0
+    ? new Set<string>(options.categories)
+    : null;
 
   const reports: NormalisedReport[] = [];
 
@@ -133,7 +142,7 @@ export async function listReports(
     if (options.directive && report.violatedDirective !== options.directive) {
       continue;
     }
-    if (options.category && report.category !== options.category) {
+    if (categorySet && !categorySet.has(report.category)) {
       continue;
     }
 

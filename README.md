@@ -163,9 +163,9 @@ List recent reports (newest first).
 | `limit` | `50` | Number of reports (max 200) |
 | `cursor` | — | Pagination cursor from previous response |
 | `directive` | — | Filter by violated directive (e.g. `script-src`) |
-| `category` | — | Filter by source category (see below) |
+| `category` | — | Filter by source category. Accepts a single value or a comma-separated list. |
 
-Valid `category` values: `extension`, `browser-internal`, `inline`, `data`, `blob`, `eval`, `same-origin`, `external`, `unknown`. Categories are derived at ingestion from `blockedUri` + `documentUri` and stored on every report.
+Valid `category` values: `extension`, `browser-internal`, `inline`, `data`, `blob`, `eval`, `same-origin`, `external`, `unknown`. Categories are derived at ingestion from `blockedUri` + `documentUri` + `sourceFile` and stored on every report.
 
 ```bash
 # Recent reports
@@ -174,11 +174,11 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
 
 # Manual audit of muted browser-extension reports
 curl -H "Authorization: Bearer YOUR_TOKEN" \
-  https://your-worker.workers.dev/reports?category=extension
+  https://your-worker.workers.dev/reports?category=extension,browser-internal
 
-# High-signal inline-script violations only
+# High-signal inline-script and eval violations only
 curl -H "Authorization: Bearer YOUR_TOKEN" \
-  https://your-worker.workers.dev/reports?category=inline
+  https://your-worker.workers.dev/reports?category=inline,eval
 ```
 
 Response:

@@ -25,16 +25,21 @@ export async function handleListReports(
   const limit = parseInt(url.searchParams.get("limit") || "50", 10);
   const cursor = url.searchParams.get("cursor") || undefined;
   const directive = url.searchParams.get("directive") || undefined;
+  // `category` accepts a single category or comma-separated list. An empty
+  // value (or absent param) means no category filter.
   const categoryRaw = url.searchParams.get("category");
-  let category: ReportCategory | undefined;
-  if (categoryRaw !== null) {
-    if (!isReportCategory(categoryRaw)) {
-      return new Response(
-        JSON.stringify({ error: `Unknown category: ${categoryRaw}` }),
-        { status: 400, headers: { "Content-Type": "application/json" } },
-      );
+  let categories: ReportCategory[] | undefined;
+  if (categoryRaw !== null && categoryRaw.trim() !== "") {
+    const parsed = categoryRaw.split(",").map((c) => c.trim()).filter(Boolean);
+    for (const c of parsed) {
+      if (!isReportCategory(c)) {
+        return new Response(
+          JSON.stringify({ error: `Unknown category: ${c}` }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
     }
-    category = categoryRaw;
+    categories = parsed as ReportCategory[];
   }
 
   const kv = getKvNamespace(env);
@@ -42,7 +47,7 @@ export async function handleListReports(
     limit: Number.isFinite(limit) ? limit : 50,
     cursor,
     directive,
-    category,
+    categories,
   });
 
   return new Response(JSON.stringify(result), {
