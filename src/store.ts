@@ -12,6 +12,7 @@
  */
 
 import { INVERTED_TS_CEILING } from "./config";
+import type { ReportCategory } from "./classify";
 import type { NormalisedReport, ListReportsResponse } from "./types";
 
 /**
@@ -72,13 +73,15 @@ export async function listReports(
     limit?: number;
     cursor?: string;
     directive?: string;
+    category?: ReportCategory;
   } = {},
 ): Promise<ListReportsResponse> {
   const requestLimit = Math.min(Math.max(options.limit || 50, 1), 200);
 
-  // We may need to over-fetch if filtering by directive, since KV
+  // We may need to over-fetch if any filter is applied, since KV
   // doesn't support value-based filtering natively.
-  const fetchLimit = options.directive ? requestLimit * 3 : requestLimit;
+  const hasFilter = Boolean(options.directive || options.category);
+  const fetchLimit = hasFilter ? requestLimit * 3 : requestLimit;
 
   const listResult = await kv.list({
     prefix: "report:",
@@ -94,8 +97,10 @@ export async function listReports(
     const report = await kv.get<NormalisedReport>(key.name, "json");
     if (!report) continue;
 
-    // Apply directive filter if specified
     if (options.directive && report.violatedDirective !== options.directive) {
+      continue;
+    }
+    if (options.category && report.category !== options.category) {
       continue;
     }
 

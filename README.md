@@ -160,10 +160,22 @@ List recent reports (newest first).
 | `limit` | `50` | Number of reports (max 200) |
 | `cursor` | — | Pagination cursor from previous response |
 | `directive` | — | Filter by violated directive (e.g. `script-src`) |
+| `category` | — | Filter by source category (see below) |
+
+Valid `category` values: `extension`, `browser-internal`, `inline`, `data`, `blob`, `eval`, `same-origin`, `external`, `unknown`. Categories are derived at ingestion from `blockedUri` + `documentUri` and stored on every report.
 
 ```bash
+# Recent reports
 curl -H "Authorization: Bearer YOUR_TOKEN" \
   https://your-worker.workers.dev/reports?limit=10&directive=script-src
+
+# Manual audit of muted browser-extension reports
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  https://your-worker.workers.dev/reports?category=extension
+
+# High-signal inline-script violations only
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  https://your-worker.workers.dev/reports?category=inline
 ```
 
 Response:

@@ -8,6 +8,8 @@ import type { Env } from "./types";
 import { getKvNamespace } from "./config";
 import { requireAuth } from "./auth";
 import { getReport, listReports } from "./store";
+import { isReportCategory } from "./classify";
+import type { ReportCategory } from "./classify";
 
 /**
  * Handle GET /reports — list recent reports with pagination and filtering.
@@ -23,12 +25,24 @@ export async function handleListReports(
   const limit = parseInt(url.searchParams.get("limit") || "50", 10);
   const cursor = url.searchParams.get("cursor") || undefined;
   const directive = url.searchParams.get("directive") || undefined;
+  const categoryRaw = url.searchParams.get("category");
+  let category: ReportCategory | undefined;
+  if (categoryRaw !== null) {
+    if (!isReportCategory(categoryRaw)) {
+      return new Response(
+        JSON.stringify({ error: `Unknown category: ${categoryRaw}` }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    category = categoryRaw;
+  }
 
   const kv = getKvNamespace(env);
   const result = await listReports(kv, {
     limit: Number.isFinite(limit) ? limit : 50,
     cursor,
     directive,
+    category,
   });
 
   return new Response(JSON.stringify(result), {

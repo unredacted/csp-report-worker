@@ -123,6 +123,49 @@ describe("GET /reports", () => {
   });
 });
 
+describe("GET /reports?category=", () => {
+  it("returns 400 for an unknown category", async () => {
+    const ctx = mockCtx();
+    const req = new Request("https://worker.example.com/reports?category=garbage", {
+      headers: { Authorization: `Bearer ${API_TOKEN}` },
+    });
+    const res = await worker.fetch(req, testEnv(), ctx);
+    await ctx.flush();
+    expect(res.status).toBe(400);
+  });
+
+  it("filters listings by category", async () => {
+    const ctx = mockCtx();
+    const ext = makeReport({
+      id: "ee" + Date.now().toString(16) + "ext",
+      blockedUri: "chrome-extension://abc/x.js",
+      category: "extension",
+    });
+    const real = makeReport({
+      id: "ee" + Date.now().toString(16) + "real",
+      blockedUri: "https://evil.example/x.js",
+      category: "external",
+    });
+    await storeReport(env.CSP_REPORTS as KVNamespace, ext, 600);
+    await storeReport(env.CSP_REPORTS as KVNamespace, real, 600);
+
+    const req = new Request(
+      "https://worker.example.com/reports?category=extension&limit=200",
+      { headers: { Authorization: `Bearer ${API_TOKEN}` } },
+    );
+    const res = await worker.fetch(req, testEnv(), ctx);
+    await ctx.flush();
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as { reports: NormalisedReport[] };
+    const ids = body.reports.map((r) => r.id);
+    expect(ids).toContain(ext.id);
+    expect(ids).not.toContain(real.id);
+    // All returned reports should be in the requested category
+    for (const r of body.reports) expect(r.category).toBe("extension");
+  });
+});
+
 describe("GET /reports/:id", () => {
   it("should return 404 for nonexistent report", async () => {
     const ctx = mockCtx();
