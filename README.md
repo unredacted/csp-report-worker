@@ -196,6 +196,20 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
   https://your-worker.workers.dev/reports/abc123...
 ```
 
+## Dashboard
+
+The Worker also serves a small dashboard SPA from `/`. It uses the same Bearer token as the API for authentication and is built with React 19, Tailwind CSS v4, and shadcn/ui. The login screen prompts for the API token and stores it in `sessionStorage` (cleared when the browser closes); every API call is sent with `Authorization: Bearer <token>`.
+
+```bash
+# Start the worker locally
+npm run dev
+
+# In another terminal, start the dashboard's dev server (with API proxy)
+npm run dev:dashboard
+```
+
+The dashboard build outputs to `dist/` and is bundled into the Worker by Wrangler via the `[assets]` binding in `wrangler.toml`. `npm run deploy` builds the SPA before invoking `wrangler deploy`.
+
 ## Architecture
 
 ```

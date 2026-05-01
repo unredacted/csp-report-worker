@@ -63,6 +63,26 @@ AWS_SES_REGION = "us-east-1"
 binding = "CSP_REPORTS"
 id = "<your-kv-namespace-id>"
 
+# Workers Assets binding — serves the dashboard SPA from dist/.
+# `not_found_handling = "single-page-application"` lets client-side routing
+# work: any path not matched by an asset returns dist/index.html so the
+# React Router on the page can take over.
+# `run_worker_first = ["/report", "/report/csp", "/reports/*", "/health", "/auth/*"]`
+# guarantees the Worker handles every API path before the asset fetcher gets
+# a chance to 404.
+[assets]
+binding = "ASSETS"
+directory = "./dist"
+not_found_handling = "single-page-application"
+run_worker_first = [
+  "/report",
+  "/report/csp",
+  "/reports",
+  "/reports/*",
+  "/health",
+  "/auth/*",
+]
+
 # Send Email binding — only needed if EMAIL_PROVIDER = "cloudflare"
 # Uncomment the lines below to enable Cloudflare Email Workers:
 # [[send_email]]

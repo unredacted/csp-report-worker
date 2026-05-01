@@ -15,6 +15,10 @@ export interface Env {
   // Cloudflare Send Email binding (optional — only needed for EMAIL_PROVIDER = "cloudflare")
   EMAIL?: SendEmail;
 
+  // Cloudflare Workers Assets binding for the dashboard SPA. Configured in
+  // wrangler.toml under [assets]; absent in unit-test envs.
+  ASSETS?: Fetcher;
+
   // --- Vars ---
   NOTIFY_EMAILS: string;
   NOTIFY_WEBHOOKS: string;

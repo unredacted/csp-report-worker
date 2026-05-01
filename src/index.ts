@@ -70,9 +70,16 @@ app.get("/reports/:id{[a-f0-9]+}", authMiddleware, (c) =>
   handleGetReport(c.req.raw, c.env, c.req.param("id")!),
 );
 
-app.notFound((c) =>
-  c.json({ error: "Not found" }, 404),
-);
+// Anything unmatched falls through to the dashboard SPA on GET/HEAD.
+// Other methods get the existing JSON 404. When the ASSETS binding isn't
+// configured (unit tests) the JSON 404 also applies.
+app.notFound(async (c) => {
+  const m = c.req.method;
+  if ((m === "GET" || m === "HEAD") && c.env.ASSETS) {
+    return c.env.ASSETS.fetch(c.req.raw);
+  }
+  return c.json({ error: "Not found" }, 404);
+});
 
 export default app;
 
