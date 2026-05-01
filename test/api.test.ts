@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { storeReport } from "../src/store";
+import { getKvNamespace } from "../src/config";
 import type { Env, NormalisedReport } from "../src/types";
 
 // We test by calling the worker's fetch handler directly
@@ -137,7 +138,7 @@ describe("GET /reports", () => {
   it("should return stored reports", async () => {
     const ctx = mockCtx();
     const report = makeReport();
-    await storeReport(env.CSP_REPORTS as KVNamespace, report, 600);
+    await storeReport(getKvNamespace(env as unknown as Env), report, 600);
 
     const req = new Request("https://worker.example.com/reports", {
       headers: { Authorization: `Bearer ${API_TOKEN}` },
@@ -176,8 +177,8 @@ describe("GET /reports?category=", () => {
       blockedUri: "https://evil.example/x.js",
       category: "external",
     });
-    await storeReport(env.CSP_REPORTS as KVNamespace, ext, 600);
-    await storeReport(env.CSP_REPORTS as KVNamespace, real, 600);
+    await storeReport(getKvNamespace(env as unknown as Env), ext, 600);
+    await storeReport(getKvNamespace(env as unknown as Env), real, 600);
 
     const req = new Request(
       "https://worker.example.com/reports?category=extension&limit=200",
@@ -193,6 +194,76 @@ describe("GET /reports?category=", () => {
     expect(ids).not.toContain(real.id);
     // All returned reports should be in the requested category
     for (const r of body.reports) expect(r.category).toBe("extension");
+  });
+});
+
+describe("backfill of pre-migration records", () => {
+  it("derives category from blockedUri when reading an old record without one", async () => {
+    const ctx = mockCtx();
+    // Simulate a record written by the old Worker: no category field, empty
+    // violatedDirective. Cast through unknown so TS lets us omit `category`.
+    const oldRecord = {
+      id: "ee" + Date.now().toString(16) + "0d0001",
+      timestamp: new Date().toISOString(),
+      documentUri: "https://example.com/page",
+      blockedUri: "https://evil.example/x.js",
+      violatedDirective: "",
+      effectiveDirective: "script-src",
+      originalPolicy: "script-src 'self'",
+      disposition: "enforce",
+      referrer: "",
+      sourceFile: "",
+      lineNumber: 0,
+      columnNumber: 0,
+      statusCode: 200,
+      userAgent: "",
+      sourceFormat: "report-to",
+    } as unknown as NormalisedReport;
+    await storeReport(getKvNamespace(env as unknown as Env), oldRecord, 600);
+
+    const req = new Request(`https://worker.example.com/reports/${oldRecord.id}`, {
+      headers: { Authorization: `Bearer ${API_TOKEN}` },
+    });
+    const res = await worker.fetch(req, testEnv(), ctx);
+    await ctx.flush();
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as NormalisedReport;
+    // Backfilled at read time from the URLs.
+    expect(body.category).toBe("external");
+    // violatedDirective backfilled from effectiveDirective.
+    expect(body.violatedDirective).toBe("script-src");
+  });
+
+  it("backfilled category lets ?category= filter find old records", async () => {
+    const ctx = mockCtx();
+    const oldExt = {
+      id: "ee" + Date.now().toString(16) + "0dec71",
+      timestamp: new Date().toISOString(),
+      documentUri: "https://example.com/page",
+      blockedUri: "chrome-extension://abc/inject.js",
+      violatedDirective: "",
+      effectiveDirective: "script-src",
+      originalPolicy: "",
+      disposition: "enforce",
+      referrer: "",
+      sourceFile: "",
+      lineNumber: 0,
+      columnNumber: 0,
+      statusCode: 200,
+      userAgent: "",
+      sourceFormat: "report-to",
+    } as unknown as NormalisedReport;
+    await storeReport(getKvNamespace(env as unknown as Env), oldExt, 600);
+
+    const req = new Request(
+      "https://worker.example.com/reports?category=extension&limit=200",
+      { headers: { Authorization: `Bearer ${API_TOKEN}` } },
+    );
+    const res = await worker.fetch(req, testEnv(), ctx);
+    await ctx.flush();
+    const body = (await res.json()) as { reports: NormalisedReport[] };
+    expect(body.reports.map((r) => r.id)).toContain(oldExt.id);
   });
 });
 
@@ -213,7 +284,7 @@ describe("GET /reports/:id", () => {
   it("should return a stored report by ID", async () => {
     const ctx = mockCtx();
     const report = makeReport({ id: "aabbccddee" + Date.now().toString(16) });
-    await storeReport(env.CSP_REPORTS as KVNamespace, report, 600);
+    await storeReport(getKvNamespace(env as unknown as Env), report, 600);
 
     const req = new Request(`https://worker.example.com/reports/${report.id}`, {
       headers: { Authorization: `Bearer ${API_TOKEN}` },
@@ -275,7 +346,7 @@ describe("POST /report", () => {
   });
 
   it("returns 204 and STORES extension-noise reports for forensic review", async () => {
-    const kv = env.CSP_REPORTS as KVNamespace;
+    const kv = getKvNamespace(env as unknown as Env);
     const before = await kv.list({ prefix: "report:" });
     const beforeCount = before.keys.length;
 
@@ -301,7 +372,7 @@ describe("POST /report", () => {
   });
 
   it("stores every entry of a Reporting API array including muted ones", async () => {
-    const kv = env.CSP_REPORTS as KVNamespace;
+    const kv = getKvNamespace(env as unknown as Env);
     const before = await kv.list({ prefix: "report:" });
     const beforeCount = before.keys.length;
 

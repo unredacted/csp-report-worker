@@ -12,8 +12,34 @@
  */
 
 import { INVERTED_TS_CEILING } from "./config";
-import type { ReportCategory } from "./classify";
+import { classifyReport, type ReportCategory } from "./classify";
 import type { NormalisedReport, ListReportsResponse } from "./types";
+
+/**
+ * Backfill fields that may be missing on records written by older Worker
+ * versions:
+ *   - `category` (added in the category-tagging commit)
+ *   - `violatedDirective` when the modern Reporting API only sent
+ *     `effectiveDirective` and the previous code left it empty
+ *
+ * The classifier is deterministic and uses fields every record already has,
+ * so this is safe to run on every read. Records get rewritten to KV on
+ * normal ingestion of new violations and age out on their own (KV TTL),
+ * so we don't write the migrated record back — read-side fix only.
+ */
+function backfillReport(r: NormalisedReport): NormalisedReport {
+  let migrated = r;
+  if (!migrated.category) {
+    migrated = {
+      ...migrated,
+      category: classifyReport(migrated.blockedUri, migrated.documentUri).category,
+    };
+  }
+  if (!migrated.violatedDirective && migrated.effectiveDirective) {
+    migrated = { ...migrated, violatedDirective: migrated.effectiveDirective };
+  }
+  return migrated;
+}
 
 /**
  * Build the primary KV key for a report.
@@ -61,7 +87,7 @@ export async function getReport(
   if (!primary) return null;
 
   const report = await kv.get<NormalisedReport>(primary, "json");
-  return report;
+  return report ? backfillReport(report) : null;
 }
 
 /**
@@ -94,8 +120,9 @@ export async function listReports(
   for (const key of listResult.keys) {
     if (reports.length >= requestLimit) break;
 
-    const report = await kv.get<NormalisedReport>(key.name, "json");
-    if (!report) continue;
+    const raw = await kv.get<NormalisedReport>(key.name, "json");
+    if (!raw) continue;
+    const report = backfillReport(raw);
 
     if (options.directive && report.violatedDirective !== options.directive) {
       continue;

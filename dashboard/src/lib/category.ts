@@ -1,7 +1,11 @@
 import type { ReportCategory } from "./types";
 
-/** Human-readable label for a category. */
-export function categoryLabel(c: ReportCategory): string {
+/**
+ * Human-readable label for a category. Accepts unknown/undefined for
+ * defensive rendering of records written by older Worker versions that
+ * predate the category field.
+ */
+export function categoryLabel(c: ReportCategory | undefined): string {
   switch (c) {
     case "extension":
       return "Browser extension";
@@ -20,6 +24,7 @@ export function categoryLabel(c: ReportCategory): string {
     case "external":
       return "External";
     case "unknown":
+    default:
       return "Unknown";
   }
 }
@@ -29,7 +34,7 @@ export function categoryLabel(c: ReportCategory): string {
  * track signal value: muted-noise categories use neutral tones, high-signal
  * ones lean toward warning/destructive.
  */
-export function categoryBadgeClass(c: ReportCategory): string {
+export function categoryBadgeClass(c: ReportCategory | undefined): string {
   switch (c) {
     case "extension":
     case "browser-internal":
@@ -45,6 +50,7 @@ export function categoryBadgeClass(c: ReportCategory): string {
     case "external":
       return "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30";
     case "unknown":
+    default:
       return "bg-secondary text-secondary-foreground border-transparent";
   }
 }
