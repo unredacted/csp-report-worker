@@ -16,6 +16,10 @@ export interface Env {
   // (Email Service, structured payload) and "cloudflare-routing" (Email Routing, raw MIME).
   EMAIL?: SendEmail;
 
+  // Cloudflare Workers Assets binding for the dashboard SPA. Configured in
+  // wrangler.toml under [assets]; absent in unit-test envs.
+  ASSETS?: Fetcher;
+
   // --- Vars ---
   NOTIFY_EMAILS: string;
   NOTIFY_WEBHOOKS: string;
@@ -23,6 +27,7 @@ export interface Env {
   KV_TTL_SECONDS: string;
   ALLOWED_ORIGINS: string;
   EMAIL_FROM: string;
+  MUTE_CATEGORIES?: string;
 
   // --- Email provider selection ---
   // "cloudflare-email" | "cloudflare-routing" | "mailgun" | "ses" | "resend" (empty = email disabled)
@@ -48,6 +53,8 @@ export interface Env {
 // ---------------------------------------------------------------------------
 // Normalised CSP Report (internal schema)
 // ---------------------------------------------------------------------------
+
+import type { ReportCategory } from "./classify";
 
 export interface NormalisedReport {
   /** Deterministic SHA-256 hash used for dedup */
@@ -80,6 +87,8 @@ export interface NormalisedReport {
   userAgent: string;
   /** Which report format the browser sent */
   sourceFormat: "report-uri" | "report-to";
+  /** Source bucket — derived at ingestion from blockedUri + documentUri */
+  category: ReportCategory;
 }
 
 // ---------------------------------------------------------------------------

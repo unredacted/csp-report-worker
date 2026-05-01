@@ -7,57 +7,81 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import type { Context, Next } from "hono";
 import type { Env, NormalisedReport } from "./types";
 import { getAllowedOrigins, getDedupWindowMinutes, getKvNamespace, getKvTtlSeconds } from "./config";
 import { parseRequest } from "./ingest";
 import { computeFingerprint, isDuplicate, recordDedup } from "./dedup";
 import { storeReport } from "./store";
-import { dispatchNotifications } from "./notify/index";
+import { dispatchNotifications, shouldNotify } from "./notify/index";
 import { handleListReports, handleGetReport } from "./api";
+import { requireAuth } from "./auth";
 
-export default {
-  async fetch(
-    request: Request,
-    env: Env,
-    ctx: ExecutionContext,
-  ): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname;
-    const method = request.method.toUpperCase();
+type AppEnv = { Bindings: Env };
 
-    // --- Health check ---
-    if (path === "/health" && method === "GET") {
-      return new Response(null, { status: 204 });
-    }
+const app = new Hono<AppEnv>();
 
-    // --- CORS preflight for report endpoints ---
-    if (method === "OPTIONS" && (path === "/report" || path === "/report/csp")) {
-      return handleCorsPreflightResponse(request, env);
-    }
+// ---------------------------------------------------------------------------
+// CORS for report ingestion (Reporting API v1 sends preflight)
+// ---------------------------------------------------------------------------
 
-    // --- Report ingestion ---
-    if (method === "POST" && (path === "/report" || path === "/report/csp")) {
-      return handleReportIngestion(request, env, ctx);
-    }
-
-    // --- API: List reports ---
-    if (path === "/reports" && method === "GET") {
-      return handleListReports(request, env);
-    }
-
-    // --- API: Get single report ---
-    const reportMatch = path.match(/^\/reports\/([a-f0-9]+)$/);
-    if (reportMatch && method === "GET") {
-      return handleGetReport(request, env, reportMatch[1]!);
-    }
-
-    // --- 404 ---
-    return new Response(
-      JSON.stringify({ error: "Not found" }),
-      { status: 404, headers: { "Content-Type": "application/json" } },
-    );
+const corsForReports = cors({
+  origin: (origin, c) => {
+    const allowed = getAllowedOrigins(c.env);
+    if (!allowed) return origin || "*";
+    return allowed.includes(origin) ? origin : allowed[0]!;
   },
-};
+  allowMethods: ["POST", "OPTIONS"],
+  allowHeaders: ["Content-Type"],
+  maxAge: 86400,
+});
+
+app.use("/report", corsForReports);
+app.use("/report/csp", corsForReports);
+
+// ---------------------------------------------------------------------------
+// Auth middleware for protected GET endpoints
+// ---------------------------------------------------------------------------
+
+async function authMiddleware(c: Context<AppEnv>, next: Next): Promise<Response | void> {
+  const error = requireAuth(c.req.raw, c.env);
+  if (error) return error;
+  await next();
+}
+
+// ---------------------------------------------------------------------------
+// Routes
+// ---------------------------------------------------------------------------
+
+app.get("/health", (c) => c.body(null, 204));
+
+// Token validation endpoint for the SPA login flow. Returns 204 on a valid
+// Bearer token, otherwise the auth middleware's standard 401/403/503.
+// Has no side effects — does not list, fetch, or modify any data.
+app.get("/auth/check", authMiddleware, (c) => c.body(null, 204));
+
+app.post("/report", (c) => handleReportIngestion(c.req.raw, c.env, c.executionCtx));
+app.post("/report/csp", (c) => handleReportIngestion(c.req.raw, c.env, c.executionCtx));
+
+app.get("/reports", authMiddleware, (c) => handleListReports(c.req.raw, c.env));
+app.get("/reports/:id{[a-f0-9]+}", authMiddleware, (c) =>
+  handleGetReport(c.req.raw, c.env, c.req.param("id")!),
+);
+
+// Anything unmatched falls through to the dashboard SPA on GET/HEAD.
+// Other methods get the existing JSON 404. When the ASSETS binding isn't
+// configured (unit tests) the JSON 404 also applies.
+app.notFound(async (c) => {
+  const m = c.req.method;
+  if ((m === "GET" || m === "HEAD") && c.env.ASSETS) {
+    return c.env.ASSETS.fetch(c.req.raw);
+  }
+  return c.json({ error: "Not found" }, 404);
+});
+
+export default app;
 
 // ---------------------------------------------------------------------------
 // Report ingestion handler
@@ -68,7 +92,9 @@ async function handleReportIngestion(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
-  // --- Origin check ---
+  // --- Origin check (CORS middleware allows the request through; we still
+  // reject unknown origins explicitly so reports are only accepted from
+  // configured sites) ---
   const originError = checkOrigin(request, env);
   if (originError) return originError;
 
@@ -77,13 +103,9 @@ async function handleReportIngestion(
   try {
     reports = await parseRequest(request);
   } catch (err) {
-    if (err instanceof Response) return addCorsHeaders(err, request, env);
+    if (err instanceof Response) return err;
     console.error("[ingest] Unexpected parse error:", err);
-    return addCorsHeaders(
-      new Response("Internal error", { status: 500 }),
-      request,
-      env,
-    );
+    return new Response("Internal error", { status: 500 });
   }
 
   const dedupWindow = getDedupWindowMinutes(env);
@@ -106,8 +128,8 @@ async function handleReportIngestion(
           // Record dedup entry (creates or increments)
           await recordDedup(fallbackKv, fingerprint, dedupWindow);
 
-          if (!dupe) {
-            // First occurrence — notify
+          if (!dupe && shouldNotify(env, report)) {
+            // First occurrence and not muted — notify
             await dispatchNotifications(env, report, workerUrl);
           }
         } catch (err) {
@@ -118,7 +140,7 @@ async function handleReportIngestion(
   }
 
   // Browsers expect 204 and don't read the body
-  return addCorsHeaders(new Response(null, { status: 204 }), request, env);
+  return new Response(null, { status: 204 });
 }
 
 // ---------------------------------------------------------------------------
@@ -132,58 +154,8 @@ function checkOrigin(request: Request, env: Env): Response | null {
   const origin = request.headers.get("origin") || "";
   if (!origin || allowedOrigins.includes(origin)) return null;
 
-  return addCorsHeaders(
-    new Response(
-      JSON.stringify({ error: "Origin not allowed" }),
-      { status: 403, headers: { "Content-Type": "application/json" } },
-    ),
-    request,
-    env,
+  return new Response(
+    JSON.stringify({ error: "Origin not allowed" }),
+    { status: 403, headers: { "Content-Type": "application/json" } },
   );
-}
-
-// ---------------------------------------------------------------------------
-// CORS helpers
-// ---------------------------------------------------------------------------
-
-function handleCorsPreflightResponse(request: Request, env: Env): Response {
-  return addCorsHeaders(
-    new Response(null, { status: 204 }),
-    request,
-    env,
-    true,
-  );
-}
-
-function addCorsHeaders(
-  response: Response,
-  request: Request,
-  env: Env,
-  isPreflight = false,
-): Response {
-  const headers = new Headers(response.headers);
-  const origin = request.headers.get("origin") || "*";
-
-  const allowedOrigins = getAllowedOrigins(env);
-  if (allowedOrigins) {
-    // Reflect origin if it's in the allow list
-    headers.set(
-      "Access-Control-Allow-Origin",
-      allowedOrigins.includes(origin) ? origin : allowedOrigins[0]!,
-    );
-  } else {
-    headers.set("Access-Control-Allow-Origin", "*");
-  }
-
-  if (isPreflight) {
-    headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-    headers.set("Access-Control-Allow-Headers", "Content-Type");
-    headers.set("Access-Control-Max-Age", "86400");
-  }
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
 }

@@ -68,6 +68,36 @@ export function getEmailProvider(env: Env): EmailProviderType | null {
   return null;
 }
 
+/**
+ * Default report categories whose reports are stored but do NOT trigger
+ * email/webhook notifications. Browser-extension and browser-internal
+ * sources have no security signal under typical attacker models, but the
+ * reports themselves remain useful as a passive monitoring log and stay
+ * queryable via the API.
+ *
+ * Notable exclusions: `inline`, `eval`, `data`, `blob`, `same-origin`, and
+ * `external` are NOT in the default mute list — each can carry real signal.
+ */
+export const DEFAULT_MUTED_CATEGORIES: readonly string[] = [
+  "extension",
+  "browser-internal",
+];
+
+/**
+ * Resolve the list of categories whose reports should be muted (stored,
+ * but not notified about).
+ *
+ * - Unset/empty: use `DEFAULT_MUTED_CATEGORIES`.
+ * - `"none"` (case-insensitive): empty list — every report fires notifications.
+ * - Comma-separated string: explicit list, replaces the default.
+ */
+export function getMutedCategories(env: Env): readonly string[] {
+  const raw = env.MUTE_CATEGORIES?.trim();
+  if (!raw) return DEFAULT_MUTED_CATEGORIES;
+  if (raw.toLowerCase() === "none") return [];
+  return raw.split(",").map((p) => p.trim()).filter(Boolean);
+}
+
 /** Maximum request body size in bytes (64 KB). */
 export const MAX_BODY_SIZE = 65_536;
 

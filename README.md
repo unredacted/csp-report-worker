@@ -58,7 +58,31 @@ EMAIL_PROVIDER = "mailgun"  # or "ses", "resend", "cloudflare-email", "cloudflar
 DEDUP_WINDOW_MINUTES = "60"
 KV_TTL_SECONDS = "604800"
 ALLOWED_ORIGINS = ""
+MUTE_CATEGORIES = ""  # empty = mute extension + browser-internal noise from notifications (default)
 ```
+
+#### Muting browser-extension noise from notifications
+
+By default, the worker **stores every report** but **suppresses email/webhook notifications** for reports in the `extension` or `browser-internal` category. Each report is classified at ingestion using both `blockedUri` *and* `sourceFile`, so an extension-injected script reaching a legitimate-looking external host is still correctly identified as an extension report. These reports are still useful as a passive log of visitor browser behaviour and remain available for forensic review through the API.
+
+Configure the mute list with `MUTE_CATEGORIES`:
+
+| Value | Behavior |
+|-------|----------|
+| Unset / empty | Use the built-in defaults: `extension`, `browser-internal`. |
+| `"none"` | Disable muting entirely — every report fires notifications. |
+| `"cat1,cat2,..."` | Replace the default list with this explicit list. |
+
+Valid categories: `extension`, `browser-internal`, `inline`, `data`, `blob`, `eval`, `same-origin`, `external`, `unknown`.
+
+Muted reports are still:
+- stored in KV,
+- counted toward dedup state,
+- returned by `GET /reports` and `GET /reports/:id`.
+
+Only the email/webhook dispatch is suppressed.
+
+`inline`, `eval`, `data`, `blob`, `same-origin`, and `external` are deliberately **not** in the default mute list — each can carry real signal.
 
 ### 5. Set the API token (secret)
 
@@ -119,11 +143,12 @@ Content-Security-Policy: default-src 'self'; script-src 'self'; report-to csp-en
 
 Both return `204 No Content` on success. Browsers expect this and do not read the body.
 
-### Health Check
+### Health & auth probes
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/health` | Returns `204` — uptime checks |
+| `GET` | `/health` | Returns `204` — uptime checks (no auth) |
+| `GET` | `/auth/check` | Returns `204` for a valid `Authorization: Bearer <API_TOKEN>` header, otherwise `401`/`403`. Used by the dashboard login flow to validate a token without side effects. |
 
 ### Reports API (authenticated)
 
@@ -138,10 +163,22 @@ List recent reports (newest first).
 | `limit` | `50` | Number of reports (max 200) |
 | `cursor` | — | Pagination cursor from previous response |
 | `directive` | — | Filter by violated directive (e.g. `script-src`) |
+| `category` | — | Filter by source category. Accepts a single value or a comma-separated list. |
+
+Valid `category` values: `extension`, `browser-internal`, `inline`, `data`, `blob`, `eval`, `same-origin`, `external`, `unknown`. Categories are derived at ingestion from `blockedUri` + `documentUri` + `sourceFile` and stored on every report.
 
 ```bash
+# Recent reports
 curl -H "Authorization: Bearer YOUR_TOKEN" \
   https://your-worker.workers.dev/reports?limit=10&directive=script-src
+
+# Manual audit of muted browser-extension reports
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  https://your-worker.workers.dev/reports?category=extension,browser-internal
+
+# High-signal inline-script and eval violations only
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  https://your-worker.workers.dev/reports?category=inline,eval
 ```
 
 Response:
@@ -160,6 +197,20 @@ Fetch a single report by its SHA-256 ID.
 curl -H "Authorization: Bearer YOUR_TOKEN" \
   https://your-worker.workers.dev/reports/abc123...
 ```
+
+## Dashboard
+
+The Worker also serves a small dashboard SPA from `/`. It uses the same Bearer token as the API for authentication and is built with React 19, Tailwind CSS v4, and shadcn/ui. The login screen prompts for the API token and stores it in `sessionStorage` (cleared when the browser closes); every API call is sent with `Authorization: Bearer <token>`.
+
+```bash
+# Start the worker locally
+npm run dev
+
+# In another terminal, start the dashboard's dev server (with API proxy)
+npm run dev:dashboard
+```
+
+The dashboard build outputs to `dist/` and is bundled into the Worker by Wrangler via the `[assets]` binding in `wrangler.toml`. `npm run deploy` builds the SPA before invoking `wrangler deploy`.
 
 ## Architecture
 

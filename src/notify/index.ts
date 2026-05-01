@@ -5,9 +5,27 @@
  */
 
 import type { Env, NormalisedReport } from "../types";
-import { getNotifyWebhooks } from "../config";
+import { getMutedCategories, getNotifyWebhooks } from "../config";
 import { sendWebhooks } from "./webhook";
 import { sendEmails } from "./email";
+
+/**
+ * Decide whether a CSP report should fire email/webhook notifications.
+ *
+ * Reports whose `category` is in the configured mute set are still stored
+ * in KV and counted in dedup state, but they do not page operators. This
+ * keeps the report log complete for forensic review while keeping inboxes
+ * focused on signals worth reading.
+ *
+ * Categorisation considers both `blockedUri` and `sourceFile`, so a violation
+ * triggered by an extension-injected script that targets a legitimate-looking
+ * external host is still correctly identified as an extension report and muted.
+ */
+export function shouldNotify(env: Env, report: NormalisedReport): boolean {
+  const muted = getMutedCategories(env);
+  if (muted.length === 0) return true;
+  return !muted.includes(report.category);
+}
 
 /**
  * Dispatch all configured notifications for a new CSP violation.

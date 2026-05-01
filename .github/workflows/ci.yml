@@ -44,4 +44,12 @@ jobs:
       - name: Create wrangler.toml from example
         run: cp wrangler-example.toml wrangler.toml
 
+      # The [assets] binding in wrangler-example.toml points at ./dist,
+      # which Wrangler validates exists at config-load time (including
+      # when vitest-pool-workers boots). Build the dashboard so dist/
+      # is present; this also catches Vite/Tailwind/shadcn build breaks
+      # in CI for free.
+      - name: Build dashboard
+        run: npm run build:dashboard
+
       - run: npm test

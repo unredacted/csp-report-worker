@@ -7,7 +7,8 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { computeFingerprint, isDuplicate, recordDedup } from "../src/dedup";
-import type { NormalisedReport } from "../src/types";
+import { getKvNamespace } from "../src/config";
+import type { Env, NormalisedReport } from "../src/types";
 
 function makeReport(overrides?: Partial<NormalisedReport>): NormalisedReport {
   return {
@@ -26,6 +27,7 @@ function makeReport(overrides?: Partial<NormalisedReport>): NormalisedReport {
     statusCode: 200,
     userAgent: "TestAgent/1.0",
     sourceFormat: "report-uri",
+    category: "external",
     ...overrides,
   };
 }
@@ -81,24 +83,24 @@ describe("computeFingerprint", () => {
 describe("isDuplicate + recordDedup", () => {
   it("should return false for unseen fingerprint", async () => {
     const fp = "test-fingerprint-" + Date.now();
-    const result = await isDuplicate(env.CSP_REPORTS as KVNamespace, fp);
+    const result = await isDuplicate(getKvNamespace(env as unknown as Env), fp);
     expect(result).toBe(false);
   });
 
   it("should return true after recording a fingerprint", async () => {
     const fp = "test-recorded-" + Date.now();
-    await recordDedup(env.CSP_REPORTS as KVNamespace, fp, 60);
-    const result = await isDuplicate(env.CSP_REPORTS as KVNamespace, fp);
+    await recordDedup(getKvNamespace(env as unknown as Env), fp, 60);
+    const result = await isDuplicate(getKvNamespace(env as unknown as Env), fp);
     expect(result).toBe(true);
   });
 
   it("should increment count on repeated records", async () => {
     const fp = "test-counting-" + Date.now();
-    await recordDedup(env.CSP_REPORTS as KVNamespace, fp, 60);
-    await recordDedup(env.CSP_REPORTS as KVNamespace, fp, 60);
-    await recordDedup(env.CSP_REPORTS as KVNamespace, fp, 60);
+    await recordDedup(getKvNamespace(env as unknown as Env), fp, 60);
+    await recordDedup(getKvNamespace(env as unknown as Env), fp, 60);
+    await recordDedup(getKvNamespace(env as unknown as Env), fp, 60);
 
-    const raw = await (env.CSP_REPORTS as KVNamespace).get(`dedup:${fp}`, "json") as { count: number } | null;
+    const raw = await (getKvNamespace(env as unknown as Env)).get(`dedup:${fp}`, "json") as { count: number } | null;
     expect(raw).not.toBeNull();
     expect(raw!.count).toBe(3);
   });

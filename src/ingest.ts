@@ -8,6 +8,7 @@
  */
 
 import { MAX_BODY_SIZE } from "./config";
+import { classifyReport } from "./classify";
 import type {
   NormalisedReport,
   LegacyCspReportEnvelope,
@@ -41,6 +42,11 @@ async function computeReportId(report: Omit<NormalisedReport, "id">): Promise<st
 
 /**
  * Parse an incoming request and return normalised report(s).
+ *
+ * Every well-formed report is returned. Notification suppression for
+ * extension/browser-internal noise happens later, in the dispatch path —
+ * see `shouldNotify` in `src/notify/index.ts`. Storage and dedup happen
+ * for every report so the full stream stays auditable via `GET /reports`.
  *
  * @throws {Response} if the request is malformed or too large.
  */
@@ -87,8 +93,7 @@ export async function parseRequest(request: Request): Promise<NormalisedReport[]
     if (!body || typeof body !== "object") {
       throw new Response('Missing "csp-report" key in body', { status: 400 });
     }
-    const report = await normaliseLegacy(body, userAgent, timestamp);
-    return [report];
+    return [await normaliseLegacy(body, userAgent, timestamp)];
   }
 
   // --- Fallback: try to auto-detect ---
@@ -98,8 +103,7 @@ export async function parseRequest(request: Request): Promise<NormalisedReport[]
   if (typeof parsed === "object" && parsed !== null && "csp-report" in parsed) {
     const body = (parsed as LegacyCspReportEnvelope)["csp-report"];
     if (body && typeof body === "object") {
-      const report = await normaliseLegacy(body, userAgent, timestamp);
-      return [report];
+      return [await normaliseLegacy(body, userAgent, timestamp)];
     }
   }
 
@@ -136,21 +140,25 @@ async function normaliseLegacy(
   userAgent: string,
   timestamp: string,
 ): Promise<NormalisedReport> {
+  const documentUri = body["document-uri"] || "";
+  const blockedUri = body["blocked-uri"] || "";
+  const sourceFile = body["source-file"] || "";
   const partial = {
     timestamp,
-    documentUri: body["document-uri"] || "",
-    blockedUri: body["blocked-uri"] || "",
-    violatedDirective: body["violated-directive"] || "",
+    documentUri,
+    blockedUri,
+    violatedDirective: body["violated-directive"] || body["effective-directive"] || "",
     effectiveDirective: body["effective-directive"] || body["violated-directive"] || "",
     originalPolicy: body["original-policy"] || "",
     disposition: normaliseDisposition(body.disposition),
     referrer: body.referrer || "",
-    sourceFile: body["source-file"] || "",
+    sourceFile,
     lineNumber: body["line-number"] || 0,
     columnNumber: body["column-number"] || 0,
     statusCode: body["status-code"] || 0,
     userAgent,
     sourceFormat: "report-uri" as const,
+    category: classifyReport(blockedUri, documentUri, sourceFile).category,
   };
 
   const id = await computeReportId(partial);
@@ -162,21 +170,25 @@ async function normaliseReportingApi(
   userAgent: string,
   timestamp: string,
 ): Promise<NormalisedReport> {
+  const documentUri = body.documentURL || body["document-uri"] || "";
+  const blockedUri = body.blockedURL || body["blocked-uri"] || "";
+  const sourceFile = body.sourceFile || "";
   const partial = {
     timestamp,
-    documentUri: body.documentURL || body["document-uri"] || "",
-    blockedUri: body.blockedURL || body["blocked-uri"] || "",
-    violatedDirective: body.violatedDirective || "",
+    documentUri,
+    blockedUri,
+    violatedDirective: body.violatedDirective || body.effectiveDirective || "",
     effectiveDirective: body.effectiveDirective || body.violatedDirective || "",
     originalPolicy: body.originalPolicy || "",
     disposition: normaliseDisposition(body.disposition),
     referrer: body.referrer || "",
-    sourceFile: body.sourceFile || "",
+    sourceFile,
     lineNumber: body.lineNumber || 0,
     columnNumber: body.columnNumber || 0,
     statusCode: body.statusCode || 0,
     userAgent,
     sourceFormat: "report-to" as const,
+    category: classifyReport(blockedUri, documentUri, sourceFile).category,
   };
 
   const id = await computeReportId(partial);

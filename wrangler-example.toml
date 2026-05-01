@@ -25,6 +25,17 @@ KV_TTL_SECONDS = "604800"
 # Only accept reports from these origins (comma-separated). Empty = accept all.
 ALLOWED_ORIGINS = ""
 
+# Comma-separated list of report categories whose reports are STORED but
+# do NOT trigger email/webhook notifications. Browser-extension and
+# browser-internal sources rarely indicate a security issue with the site
+# itself, but the reports are still useful as a passive log of visitor
+# browser behaviour and remain queryable via GET /reports?category=...
+# Empty/unset = use built-in defaults (extension, browser-internal).
+# Set to "none" to fire notifications for every report.
+# Valid categories: extension, browser-internal, inline, data, blob, eval,
+# same-origin, external, unknown.
+MUTE_CATEGORIES = ""
+
 # Email sender address (required for all email providers)
 EMAIL_FROM = ""
 
@@ -56,6 +67,26 @@ AWS_SES_REGION = "us-east-1"
 [[kv_namespaces]]
 binding = "CSP_REPORTS"
 id = "<your-kv-namespace-id>"
+
+# Workers Assets binding — serves the dashboard SPA from dist/.
+# `not_found_handling = "single-page-application"` lets client-side routing
+# work: any path not matched by an asset returns dist/index.html so the
+# React Router on the page can take over.
+# `run_worker_first = ["/report", "/report/csp", "/reports/*", "/health", "/auth/*"]`
+# guarantees the Worker handles every API path before the asset fetcher gets
+# a chance to 404.
+[assets]
+binding = "ASSETS"
+directory = "./dist"
+not_found_handling = "single-page-application"
+run_worker_first = [
+  "/report",
+  "/report/csp",
+  "/reports",
+  "/reports/*",
+  "/health",
+  "/auth/*",
+]
 
 # send_email binding — required for EMAIL_PROVIDER = "cloudflare-email"
 # (Email Service, structured payload) OR "cloudflare-routing" (Email Routing,
