@@ -141,11 +141,12 @@ Content-Security-Policy: default-src 'self'; script-src 'self'; report-to csp-en
 
 Both return `204 No Content` on success. Browsers expect this and do not read the body.
 
-### Health Check
+### Health & auth probes
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/health` | Returns `204` — uptime checks |
+| `GET` | `/health` | Returns `204` — uptime checks (no auth) |
+| `GET` | `/auth/check` | Returns `204` for a valid `Authorization: Bearer <API_TOKEN>` header, otherwise `401`/`403`. Used by the dashboard login flow to validate a token without side effects. |
 
 ### Reports API (authenticated)
 

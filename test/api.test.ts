@@ -71,6 +71,36 @@ describe("GET /health", () => {
   });
 });
 
+describe("GET /auth/check", () => {
+  it("returns 204 with a valid Bearer token", async () => {
+    const ctx = mockCtx();
+    const req = new Request("https://worker.example.com/auth/check", {
+      headers: { Authorization: `Bearer ${API_TOKEN}` },
+    });
+    const res = await worker.fetch(req, testEnv(), ctx);
+    await ctx.flush();
+    expect(res.status).toBe(204);
+  });
+
+  it("returns 401 with no Authorization header", async () => {
+    const ctx = mockCtx();
+    const req = new Request("https://worker.example.com/auth/check");
+    const res = await worker.fetch(req, testEnv(), ctx);
+    await ctx.flush();
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 403 with an invalid token", async () => {
+    const ctx = mockCtx();
+    const req = new Request("https://worker.example.com/auth/check", {
+      headers: { Authorization: "Bearer wrong-token" },
+    });
+    const res = await worker.fetch(req, testEnv(), ctx);
+    await ctx.flush();
+    expect(res.status).toBe(403);
+  });
+});
+
 describe("GET /reports", () => {
   it("should return 401 without auth header", async () => {
     const ctx = mockCtx();

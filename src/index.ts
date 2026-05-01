@@ -57,6 +57,11 @@ async function authMiddleware(c: Context<AppEnv>, next: Next): Promise<Response 
 
 app.get("/health", (c) => c.body(null, 204));
 
+// Token validation endpoint for the SPA login flow. Returns 204 on a valid
+// Bearer token, otherwise the auth middleware's standard 401/403/503.
+// Has no side effects — does not list, fetch, or modify any data.
+app.get("/auth/check", authMiddleware, (c) => c.body(null, 204));
+
 app.post("/report", (c) => handleReportIngestion(c.req.raw, c.env, c.executionCtx));
 app.post("/report/csp", (c) => handleReportIngestion(c.req.raw, c.env, c.executionCtx));
 
