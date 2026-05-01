@@ -49,6 +49,18 @@ describe("formatPlainText", () => {
     const text = formatPlainText(noSource, WORKER_URL);
     expect(text).toContain("(none)");
   });
+
+  it("includes the source classification descriptor", () => {
+    const text = formatPlainText(REPORT, WORKER_URL);
+    expect(text).toContain("Source:");
+    expect(text).toContain("external from evil.com");
+  });
+
+  it("falls back to '(unknown directive)' when directive fields are empty", () => {
+    const blank = { ...REPORT, violatedDirective: "", effectiveDirective: "" };
+    const text = formatPlainText(blank, WORKER_URL);
+    expect(text).toContain("(unknown directive)");
+  });
 });
 
 describe("formatHtml", () => {
@@ -75,6 +87,18 @@ describe("formatHtml", () => {
     const reportOnly = formatHtml({ ...REPORT, disposition: "report" }, WORKER_URL);
     expect(reportOnly).toContain("Report Only");
   });
+
+  it("includes the source classification descriptor", () => {
+    const html = formatHtml(REPORT, WORKER_URL);
+    expect(html).toContain("Source");
+    expect(html).toContain("external from evil.com");
+  });
+
+  it("falls back to '(unknown directive)' when directive fields are empty", () => {
+    const blank = { ...REPORT, violatedDirective: "", effectiveDirective: "" };
+    const html = formatHtml(blank, WORKER_URL);
+    expect(html).toContain("(unknown directive)");
+  });
 });
 
 describe("formatSubject", () => {
@@ -89,6 +113,37 @@ describe("formatSubject", () => {
     const subject = formatSubject(longUri);
     expect(subject.length).toBeLessThan(120);
     expect(subject).toContain("...");
+  });
+
+  it("includes 'external from <host>' tag when blockedUri host differs from document host", () => {
+    const subject = formatSubject(REPORT);
+    expect(subject).toContain("external from evil.com");
+  });
+
+  it("includes 'same-origin' tag when blockedUri host matches document host", () => {
+    const sameOrigin = { ...REPORT, blockedUri: "https://example.com/forbidden.js" };
+    const subject = formatSubject(sameOrigin);
+    expect(subject).toContain("same-origin");
+  });
+
+  it("includes 'inline' tag for the literal 'inline' blockedUri", () => {
+    const inline = { ...REPORT, blockedUri: "inline" };
+    const subject = formatSubject(inline);
+    expect(subject).toContain("inline");
+  });
+
+  it("includes 'inline' tag for an empty blockedUri", () => {
+    const inline = { ...REPORT, blockedUri: "" };
+    const subject = formatSubject(inline);
+    expect(subject).toContain("inline");
+  });
+
+  it("falls back to '(unknown directive)' when violatedDirective is empty", () => {
+    const blank = { ...REPORT, violatedDirective: "" };
+    const subject = formatSubject(blank);
+    expect(subject).toContain("(unknown directive)");
+    // Must not produce the malformed double-space "Violation:  on …"
+    expect(subject).not.toMatch(/CSP Violation:\s+ on /);
   });
 });
 
