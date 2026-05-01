@@ -1,8 +1,9 @@
 /**
  * Email provider interface and factory.
  *
- * Abstracts over Cloudflare Email Workers, Mailgun, AWS SES, and Resend
- * so the active backend is selected by the EMAIL_PROVIDER env var.
+ * Abstracts over Cloudflare Email Service (HTTP API), Cloudflare Email
+ * Routing (send_email binding), Mailgun, AWS SES, and Resend so the active
+ * backend is selected by the EMAIL_PROVIDER env var.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -40,8 +41,10 @@ export function createEmailProvider(env: Env): EmailProvider | null {
   if (!provider) return null;
 
   switch (provider) {
-    case "cloudflare":
-      return createCloudflareProvider(env);
+    case "cloudflare-email":
+      return createCloudflareEmailProvider(env);
+    case "cloudflare-routing":
+      return createCloudflareRoutingProvider(env);
     case "mailgun":
       return createMailgunProvider(env);
     case "ses":
@@ -57,22 +60,67 @@ export function createEmailProvider(env: Env): EmailProvider | null {
 }
 
 // ---------------------------------------------------------------------------
-// Cloudflare Send Email Workers
+// Cloudflare Email Service (send_email binding)
 // ---------------------------------------------------------------------------
+// Docs: https://developers.cloudflare.com/email-service/get-started/send-emails/
+// Uses `env.EMAIL.send({ from, to, subject, text, html })` — the official
+// Cloudflare Email Service binding API. Unlike Email Routing, this does not
+// require taking over the zone's MX records.
 
-function createCloudflareProvider(env: Env): EmailProvider | null {
+// The Cloudflare Email Service binding accepts a structured payload, which
+// differs from the Email Routing `send_email` binding that takes a raw MIME
+// EmailMessage. Both share the [[send_email]] TOML block name, but the
+// `SendEmail` type in @cloudflare/workers-types currently only models the
+// Routing shape — hence the local interface + cast below.
+interface CloudflareEmailServiceBinding {
+  send(opts: {
+    from: string;
+    to: string;
+    subject: string;
+    text?: string;
+    html?: string;
+  }): Promise<void>;
+}
+
+function createCloudflareEmailProvider(env: Env): EmailProvider | null {
   if (!env.EMAIL) {
-    console.warn("[email:cloudflare] EMAIL binding not available — skipping");
+    console.warn("[email:cloudflare-email] EMAIL binding not available — skipping");
     return null;
   }
 
-  // Dynamic imports would be cleaner, but top-level await isn't available
-  // in all contexts. We lazily import inside send() instead.
+  const binding = env.EMAIL as unknown as CloudflareEmailServiceBinding;
+
+  return {
+    async send(opts: EmailProviderOptions): Promise<void> {
+      await binding.send({
+        from: opts.from,
+        to: opts.to,
+        subject: opts.subject,
+        text: opts.text,
+        html: opts.html,
+      });
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Cloudflare Email Routing (send_email binding)
+// ---------------------------------------------------------------------------
+// Uses the Email Routing `[[send_email]]` worker binding, which sends raw MIME
+// via Email Routing infrastructure. Requires Email Routing enabled on the zone
+// (which claims the zone's MX records) and verified destination addresses.
+
+function createCloudflareRoutingProvider(env: Env): EmailProvider | null {
+  if (!env.EMAIL) {
+    console.warn("[email:cloudflare-routing] EMAIL binding not available — skipping");
+    return null;
+  }
+
   const emailBinding = env.EMAIL;
 
   return {
     async send(opts: EmailProviderOptions): Promise<void> {
-      // Lazy imports — only loaded when the cloudflare provider is active
+      // Lazy imports — only loaded when this provider is active
       const { EmailMessage } = await import("cloudflare:email");
       const { createMimeMessage } = await import("mimetext/browser");
 

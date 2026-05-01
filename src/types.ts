@@ -12,7 +12,8 @@ export interface Env {
   // Allow dynamic KV namespace bindings
   [key: string]: unknown;
 
-  // Cloudflare Send Email binding (optional — only needed for EMAIL_PROVIDER = "cloudflare")
+  // Cloudflare send_email binding — used by both EMAIL_PROVIDER = "cloudflare-email"
+  // (Email Service, structured payload) and "cloudflare-routing" (Email Routing, raw MIME).
   EMAIL?: SendEmail;
 
   // Cloudflare Workers Assets binding for the dashboard SPA. Configured in
@@ -29,7 +30,7 @@ export interface Env {
   MUTE_BLOCKED_URI_PREFIXES?: string;
 
   // --- Email provider selection ---
-  // "cloudflare" | "mailgun" | "ses" | "resend" (empty = email disabled)
+  // "cloudflare-email" | "cloudflare-routing" | "mailgun" | "ses" | "resend" (empty = email disabled)
   EMAIL_PROVIDER?: string;
 
   // --- Mailgun (if EMAIL_PROVIDER = "mailgun") ---

@@ -44,7 +44,8 @@ describe("getEmailProvider", () => {
     expect(getEmailProvider(testEnv({ EMAIL_PROVIDER: "mailgun" }))).toBe("mailgun");
     expect(getEmailProvider(testEnv({ EMAIL_PROVIDER: "ses" }))).toBe("ses");
     expect(getEmailProvider(testEnv({ EMAIL_PROVIDER: "resend" }))).toBe("resend");
-    expect(getEmailProvider(testEnv({ EMAIL_PROVIDER: "cloudflare" }))).toBe("cloudflare");
+    expect(getEmailProvider(testEnv({ EMAIL_PROVIDER: "cloudflare-email" }))).toBe("cloudflare-email");
+    expect(getEmailProvider(testEnv({ EMAIL_PROVIDER: "cloudflare-routing" }))).toBe("cloudflare-routing");
   });
 
   it("should be case-insensitive", () => {
@@ -72,14 +73,33 @@ describe("createEmailProvider", () => {
     expect(createEmailProvider(testEnv())).toBeNull();
   });
 
-  it("should return null when cloudflare is selected but EMAIL binding is missing", () => {
+  it("should return null when cloudflare-routing is selected but EMAIL binding is missing", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const provider = createEmailProvider(testEnv({ EMAIL_PROVIDER: "cloudflare" }));
+    const provider = createEmailProvider(testEnv({ EMAIL_PROVIDER: "cloudflare-routing" }));
     expect(provider).toBeNull();
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("EMAIL binding not available"),
     );
     warnSpy.mockRestore();
+  });
+
+  it("should return null when cloudflare-email is selected but EMAIL binding is missing", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const provider = createEmailProvider(testEnv({ EMAIL_PROVIDER: "cloudflare-email" }));
+    expect(provider).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("EMAIL binding not available"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("should return a provider when cloudflare-email is configured with an EMAIL binding", () => {
+    const provider = createEmailProvider(testEnv({
+      EMAIL_PROVIDER: "cloudflare-email",
+      EMAIL: { send: vi.fn() } as any,
+    }));
+    expect(provider).not.toBeNull();
+    expect(provider).toHaveProperty("send");
   });
 
   it("should return null when mailgun is selected but MAILGUN_API_KEY is missing", () => {
@@ -314,6 +334,49 @@ describe("resend provider send()", () => {
     await expect(
       provider.send({ from: "a@b.com", to: "c@d.com", subject: "S", text: "T", html: "H" }),
     ).rejects.toThrow("Resend 401");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cloudflare Email Service (send_email binding) provider send()
+// ---------------------------------------------------------------------------
+
+describe("cloudflare-email provider send()", () => {
+  it("should call env.EMAIL.send with the structured payload", async () => {
+    const mockSend = vi.fn().mockResolvedValue(undefined);
+    const provider = createEmailProvider(testEnv({
+      EMAIL_PROVIDER: "cloudflare-email",
+      EMAIL: { send: mockSend } as any,
+    }))!;
+
+    await provider.send({
+      from: "sender@example.com",
+      to: "recipient@example.com",
+      subject: "Test Subject",
+      text: "Plain text",
+      html: "<p>HTML</p>",
+    });
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockSend).toHaveBeenCalledWith({
+      from: "sender@example.com",
+      to: "recipient@example.com",
+      subject: "Test Subject",
+      text: "Plain text",
+      html: "<p>HTML</p>",
+    });
+  });
+
+  it("should propagate errors from the binding", async () => {
+    const mockSend = vi.fn().mockRejectedValue(new Error("verified sender required"));
+    const provider = createEmailProvider(testEnv({
+      EMAIL_PROVIDER: "cloudflare-email",
+      EMAIL: { send: mockSend } as any,
+    }))!;
+
+    await expect(
+      provider.send({ from: "a@b.com", to: "c@d.com", subject: "S", text: "T", html: "H" }),
+    ).rejects.toThrow("verified sender required");
   });
 });
 
