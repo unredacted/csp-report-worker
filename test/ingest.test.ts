@@ -325,6 +325,50 @@ describe("parseRequest", () => {
     });
   });
 
+  describe("category derivation", () => {
+    function reportingApiWithBlockedUri(uri: string) {
+      return [
+        {
+          type: "csp-violation",
+          age: 0,
+          url: "https://example.com/page",
+          user_agent: "Mozilla/5.0",
+          body: { ...REPORTING_API_BODY[0]!.body, blockedURL: uri },
+        },
+      ];
+    }
+
+    it.each([
+      ["chrome-extension://abc/x.js", "extension"],
+      ["moz-extension://abc/x.js", "extension"],
+      ["chrome://settings", "browser-internal"],
+      ["about:blank", "browser-internal"],
+      ["", "inline"],
+      ["inline", "inline"],
+      ["eval", "eval"],
+      ["data:text/javascript,1", "data"],
+      ["blob:https://example.com/x", "blob"],
+      ["https://example.com/forbidden.js", "same-origin"],
+      ["https://evil.example/x.js", "external"],
+    ] as const)("populates category=%s for blockedUri %s", async (uri, category) => {
+      const req = makeRequest(reportingApiWithBlockedUri(uri), "application/reports+json");
+      const [r] = await parseRequest(req);
+      expect(r!.category).toBe(category);
+    });
+
+    it("populates category for legacy report-uri payloads", async () => {
+      const body = {
+        "csp-report": {
+          ...LEGACY_BODY["csp-report"],
+          "blocked-uri": "chrome-extension://abc/x.js",
+        },
+      };
+      const req = makeRequest(body, "application/csp-report");
+      const [r] = await parseRequest(req);
+      expect(r!.category).toBe("extension");
+    });
+  });
+
   describe("parses extension/browser-internal reports (no longer dropped at ingest)", () => {
     // The mute behavior now lives in src/notify (shouldNotify); the parser
     // should return every well-formed report regardless of source.

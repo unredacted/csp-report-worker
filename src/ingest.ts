@@ -8,6 +8,7 @@
  */
 
 import { MAX_BODY_SIZE } from "./config";
+import { classifyReport } from "./classify";
 import type {
   NormalisedReport,
   LegacyCspReportEnvelope,
@@ -139,10 +140,12 @@ async function normaliseLegacy(
   userAgent: string,
   timestamp: string,
 ): Promise<NormalisedReport> {
+  const documentUri = body["document-uri"] || "";
+  const blockedUri = body["blocked-uri"] || "";
   const partial = {
     timestamp,
-    documentUri: body["document-uri"] || "",
-    blockedUri: body["blocked-uri"] || "",
+    documentUri,
+    blockedUri,
     violatedDirective: body["violated-directive"] || body["effective-directive"] || "",
     effectiveDirective: body["effective-directive"] || body["violated-directive"] || "",
     originalPolicy: body["original-policy"] || "",
@@ -154,6 +157,7 @@ async function normaliseLegacy(
     statusCode: body["status-code"] || 0,
     userAgent,
     sourceFormat: "report-uri" as const,
+    category: classifyReport(blockedUri, documentUri).category,
   };
 
   const id = await computeReportId(partial);
@@ -165,10 +169,12 @@ async function normaliseReportingApi(
   userAgent: string,
   timestamp: string,
 ): Promise<NormalisedReport> {
+  const documentUri = body.documentURL || body["document-uri"] || "";
+  const blockedUri = body.blockedURL || body["blocked-uri"] || "";
   const partial = {
     timestamp,
-    documentUri: body.documentURL || body["document-uri"] || "",
-    blockedUri: body.blockedURL || body["blocked-uri"] || "",
+    documentUri,
+    blockedUri,
     violatedDirective: body.violatedDirective || body.effectiveDirective || "",
     effectiveDirective: body.effectiveDirective || body.violatedDirective || "",
     originalPolicy: body.originalPolicy || "",
@@ -180,6 +186,7 @@ async function normaliseReportingApi(
     statusCode: body.statusCode || 0,
     userAgent,
     sourceFormat: "report-to" as const,
+    category: classifyReport(blockedUri, documentUri).category,
   };
 
   const id = await computeReportId(partial);

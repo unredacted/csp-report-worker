@@ -29,6 +29,7 @@ const REPORT: NormalisedReport = {
   statusCode: 200,
   userAgent: "Mozilla/5.0 (Test)",
   sourceFormat: "report-uri",
+  category: "external",
 };
 
 const WORKER_URL = "https://csp.example.com";

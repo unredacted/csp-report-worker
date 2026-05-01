@@ -30,6 +30,7 @@ function makeReport(overrides?: Partial<NormalisedReport>): NormalisedReport {
     statusCode: 200,
     userAgent: "TestAgent/1.0",
     sourceFormat: "report-uri",
+    category: "external",
     ...overrides,
   };
 }

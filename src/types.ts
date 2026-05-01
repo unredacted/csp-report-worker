@@ -49,6 +49,8 @@ export interface Env {
 // Normalised CSP Report (internal schema)
 // ---------------------------------------------------------------------------
 
+import type { ReportCategory } from "./classify";
+
 export interface NormalisedReport {
   /** Deterministic SHA-256 hash used for dedup */
   id: string;
@@ -80,6 +82,8 @@ export interface NormalisedReport {
   userAgent: string;
   /** Which report format the browser sent */
   sourceFormat: "report-uri" | "report-to";
+  /** Source bucket — derived at ingestion from blockedUri + documentUri */
+  category: ReportCategory;
 }
 
 // ---------------------------------------------------------------------------

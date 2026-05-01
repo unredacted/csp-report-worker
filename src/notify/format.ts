@@ -5,76 +5,13 @@
  */
 
 import type { NormalisedReport } from "../types";
-
-export type BlockedUriCategory =
-  | "same-origin"
-  | "external"
-  | "inline"
-  | "data"
-  | "blob"
-  | "eval"
-  | "unknown";
-
-export interface BlockedUriClassification {
-  hostname: string | null;
-  category: BlockedUriCategory;
-  /** Human-readable label for use in subjects and bodies. */
-  label: string;
-}
-
-/**
- * Categorise a `blockedUri` relative to its `documentUri` so SecOps can
- * triage from the email subject without opening the report.
- *
- * "same-origin" and "inline" are the highest-attention cases — both can
- * indicate stored XSS or page-template compromise.
- */
-export function classifyBlockedUri(
-  blockedUri: string,
-  documentUri: string,
-): BlockedUriClassification {
-  const raw = (blockedUri || "").trim();
-
-  if (raw === "" || raw.toLowerCase() === "inline") {
-    return { hostname: null, category: "inline", label: "inline" };
-  }
-  if (raw.toLowerCase() === "eval") {
-    return { hostname: null, category: "eval", label: "eval" };
-  }
-  if (raw.startsWith("data:")) {
-    return { hostname: null, category: "data", label: "data: URI" };
-  }
-  if (raw.startsWith("blob:")) {
-    return { hostname: null, category: "blob", label: "blob: URL" };
-  }
-
-  let blockedHost: string | null = null;
-  try {
-    blockedHost = new URL(raw).hostname || null;
-  } catch {
-    blockedHost = null;
-  }
-  let docHost: string | null = null;
-  try {
-    docHost = new URL(documentUri).hostname || null;
-  } catch {
-    docHost = null;
-  }
-
-  if (!blockedHost) {
-    return { hostname: null, category: "unknown", label: raw || "unknown" };
-  }
-  if (docHost && blockedHost === docHost) {
-    return { hostname: blockedHost, category: "same-origin", label: "same-origin" };
-  }
-  return { hostname: blockedHost, category: "external", label: `external from ${blockedHost}` };
-}
+import { classifyReport } from "../classify";
 
 /**
  * Format a report as a plain text email body.
  */
 export function formatPlainText(report: NormalisedReport, workerUrl: string): string {
-  const classification = classifyBlockedUri(report.blockedUri, report.documentUri);
+  const classification = classifyReport(report.blockedUri, report.documentUri);
   const lines = [
     "CSP Violation Report",
     "====================",
@@ -114,7 +51,7 @@ export function formatHtml(report: NormalisedReport, workerUrl: string): string 
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-  const classification = classifyBlockedUri(report.blockedUri, report.documentUri);
+  const classification = classifyReport(report.blockedUri, report.documentUri);
   const directive = report.violatedDirective || "(unknown directive)";
   const effective = report.effectiveDirective || "(unknown directive)";
 
@@ -186,7 +123,7 @@ export function formatHtml(report: NormalisedReport, workerUrl: string): string 
  */
 export function formatSubject(report: NormalisedReport): string {
   const directive = report.violatedDirective || "(unknown directive)";
-  const classification = classifyBlockedUri(report.blockedUri, report.documentUri);
+  const classification = classifyReport(report.blockedUri, report.documentUri);
 
   let docUri = report.documentUri;
   try {
