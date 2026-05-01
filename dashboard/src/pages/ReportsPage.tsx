@@ -1,11 +1,26 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
-import { ChevronRight, Loader2, RefreshCw } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -19,83 +34,146 @@ import { listReports } from "@/lib/api";
 import type { ReportCategory } from "@/lib/types";
 import { categoryBadgeClass, categoryLabel } from "@/lib/category";
 
-type View = "all" | "genuine" | "extension" | "inline";
+type View = "all" | "genuine" | "extension" | "high";
 
 interface TabSpec {
   key: View;
   label: string;
   description: string;
-  filter?: (cat: ReportCategory) => boolean;
+  /** Categories to request from the server. Empty = no filter. */
+  categories: readonly ReportCategory[];
 }
 
 const TABS: readonly TabSpec[] = [
-  { key: "all", label: "All", description: "Every stored report." },
+  {
+    key: "all",
+    label: "All",
+    description: "Every stored report.",
+    categories: [],
+  },
   {
     key: "genuine",
     label: "Genuine",
     description: "Excludes browser-extension and browser-internal noise.",
-    filter: (c) => c !== "extension" && c !== "browser-internal",
+    categories: [
+      "inline",
+      "data",
+      "blob",
+      "eval",
+      "same-origin",
+      "external",
+      "unknown",
+    ],
   },
   {
     key: "extension",
     label: "Extension noise",
     description: "Reports caused by user-installed browser extensions.",
-    filter: (c) => c === "extension" || c === "browser-internal",
+    categories: ["extension", "browser-internal"],
   },
   {
-    key: "inline",
+    key: "high",
     label: "High signal",
     description: "Inline scripts/styles and eval — high-signal XSS indicators.",
-    filter: (c) => c === "inline" || c === "eval",
+    categories: ["inline", "eval"],
   },
 ];
+
+const PAGE_SIZES = [25, 50, 100, 200] as const;
+const DEFAULT_PAGE_SIZE = 50;
+
+type SortDir = "desc" | "asc";
 
 export function ReportsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const view = (searchParams.get("view") as View) || "all";
-  const [search, setSearch] = useState("");
+  const pageSizeParam = parseInt(searchParams.get("size") || "", 10);
+  const pageSize = (PAGE_SIZES as readonly number[]).includes(pageSizeParam)
+    ? pageSizeParam
+    : DEFAULT_PAGE_SIZE;
 
-  const query = useQuery({
-    queryKey: ["reports"],
-    queryFn: () => listReports({ limit: 200 }),
-    staleTime: 30_000,
-  });
+  const [search, setSearch] = useState("");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  // Cursor history. Index 0 is always undefined (page 1 has no cursor);
+  // index N is the cursor needed to fetch the page (N+1)-th batch.
+  const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
+  const [pageIndex, setPageIndex] = useState(0);
+  const cursor = cursors[pageIndex];
 
   const tab = TABS.find((t) => t.key === view) ?? TABS[0]!;
 
-  const filtered = useMemo(() => {
-    const reports = query.data?.reports ?? [];
-    let list = reports;
-    if (tab.filter) list = list.filter((r) => tab.filter!(r.category));
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(
-        (r) =>
-          r.documentUri.toLowerCase().includes(q) ||
-          r.blockedUri.toLowerCase().includes(q) ||
-          r.violatedDirective.toLowerCase().includes(q),
-      );
-    }
-    return list;
-  }, [query.data, tab, search]);
+  // Reset pagination when filters that change the result set change.
+  useEffect(() => {
+    setCursors([undefined]);
+    setPageIndex(0);
+  }, [view, pageSize]);
 
-  const counts = useMemo(() => {
-    const reports = query.data?.reports ?? [];
-    const map: Record<View, number> = { all: 0, genuine: 0, extension: 0, inline: 0 };
-    for (const r of reports) {
-      map.all++;
-      for (const t of TABS) {
-        if (t.key !== "all" && t.filter && t.filter(r.category)) map[t.key]++;
-      }
-    }
-    return map;
-  }, [query.data]);
+  const query = useQuery({
+    queryKey: ["reports", view, pageSize, cursor],
+    queryFn: () =>
+      listReports({
+        limit: pageSize,
+        cursor,
+        categories: tab.categories.length > 0 ? tab.categories : undefined,
+      }),
+    staleTime: 30_000,
+  });
+
+  const pageReports = query.data?.reports ?? [];
+  const hasNextPage = Boolean(query.data?.cursor);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return pageReports;
+    const q = search.toLowerCase();
+    return pageReports.filter(
+      (r) =>
+        r.documentUri.toLowerCase().includes(q) ||
+        r.blockedUri.toLowerCase().includes(q) ||
+        r.violatedDirective.toLowerCase().includes(q),
+    );
+  }, [pageReports, search]);
+
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      const aT = new Date(a.timestamp).getTime();
+      const bT = new Date(b.timestamp).getTime();
+      return sortDir === "desc" ? bT - aT : aT - bT;
+    });
+  }, [filtered, sortDir]);
 
   function setView(next: View) {
     const params = new URLSearchParams(searchParams);
     if (next === "all") params.delete("view");
     else params.set("view", next);
     setSearchParams(params, { replace: true });
+  }
+
+  function setPageSize(next: number) {
+    const params = new URLSearchParams(searchParams);
+    if (next === DEFAULT_PAGE_SIZE) params.delete("size");
+    else params.set("size", String(next));
+    setSearchParams(params, { replace: true });
+  }
+
+  function nextPage() {
+    if (!hasNextPage) return;
+    const next = query.data!.cursor!;
+    setCursors((prev) => {
+      const out = prev.slice(0, pageIndex + 2);
+      out[pageIndex + 1] = next;
+      return out;
+    });
+    setPageIndex(pageIndex + 1);
+  }
+
+  function prevPage() {
+    if (pageIndex === 0) return;
+    setPageIndex(pageIndex - 1);
+  }
+
+  function toggleSort() {
+    setSortDir((prev) => (prev === "desc" ? "asc" : "desc"));
   }
 
   return (
@@ -126,9 +204,6 @@ export function ReportsPage() {
             {TABS.map((t) => (
               <TabsTrigger key={t.key} value={t.key}>
                 {t.label}
-                <span className="ml-2 text-xs text-muted-foreground">
-                  {counts[t.key]}
-                </span>
               </TabsTrigger>
             ))}
           </TabsList>
@@ -139,6 +214,24 @@ export function ReportsPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        <div className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
+          <span>Per page</span>
+          <Select
+            value={String(pageSize)}
+            onValueChange={(v) => setPageSize(parseInt(v, 10))}
+          >
+            <SelectTrigger className="w-[88px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZES.map((n) => (
+                <SelectItem key={n} value={String(n)}>
+                  {n}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {query.isError ? (
@@ -151,7 +244,22 @@ export function ReportsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[140px]">Time</TableHead>
+              <TableHead className="w-[160px]">
+                <button
+                  type="button"
+                  onClick={toggleSort}
+                  className="inline-flex items-center gap-1 hover:text-foreground"
+                >
+                  Time
+                  {sortDir === "desc" ? (
+                    <ArrowDown className="size-3" />
+                  ) : sortDir === "asc" ? (
+                    <ArrowUp className="size-3" />
+                  ) : (
+                    <ArrowUpDown className="size-3" />
+                  )}
+                </button>
+              </TableHead>
               <TableHead className="w-[140px]">Category</TableHead>
               <TableHead className="w-[160px]">Directive</TableHead>
               <TableHead>Document</TableHead>
@@ -167,22 +275,22 @@ export function ReportsPage() {
                   Loading reports…
                 </TableCell>
               </TableRow>
-            ) : filtered.length === 0 ? (
+            ) : sorted.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-muted-foreground py-12">
                   No reports match this view.
                 </TableCell>
               </TableRow>
             ) : (
-              filtered.map((r) => (
+              sorted.map((r) => (
                 <TableRow key={r.id} className="cursor-pointer">
-                  <TableCell className="text-muted-foreground text-xs">
+                  <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
                     {formatDistanceToNow(new Date(r.timestamp), { addSuffix: true })}
                   </TableCell>
                   <TableCell>
                     <Badge
                       variant="outline"
-                      className={categoryBadgeClass(r.category)}
+                      className={`${categoryBadgeClass(r.category)} whitespace-nowrap`}
                     >
                       {categoryLabel(r.category)}
                     </Badge>
@@ -212,12 +320,42 @@ export function ReportsPage() {
         </Table>
       </div>
 
-      {query.data?.cursor ? (
-        <p className="text-xs text-muted-foreground">
-          More results available — pagination not yet wired up; refine filters or
-          query the API directly with <code>?cursor=…</code>.
-        </p>
-      ) : null}
+      <div className="flex items-center justify-between text-sm text-muted-foreground">
+        <div>
+          Page {pageIndex + 1}
+          {sorted.length > 0 ? (
+            <>
+              {" — "}
+              <span>
+                showing {sorted.length}
+                {search.trim() && pageReports.length !== sorted.length
+                  ? ` of ${pageReports.length} on this page`
+                  : ""}
+              </span>
+            </>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={prevPage}
+            disabled={pageIndex === 0 || query.isFetching}
+          >
+            <ChevronLeft className="size-4" />
+            <span>Previous</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={nextPage}
+            disabled={!hasNextPage || query.isFetching}
+          >
+            <span>Next</span>
+            <ChevronRight className="size-4" />
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

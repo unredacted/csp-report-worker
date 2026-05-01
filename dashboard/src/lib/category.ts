@@ -8,7 +8,7 @@ import type { ReportCategory } from "./types";
 export function categoryLabel(c: ReportCategory | undefined): string {
   switch (c) {
     case "extension":
-      return "Browser extension";
+      return "Extension";
     case "browser-internal":
       return "Browser-internal";
     case "inline":

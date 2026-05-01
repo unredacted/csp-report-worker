@@ -62,7 +62,8 @@ export interface ListReportsParams {
   limit?: number;
   cursor?: string;
   directive?: string;
-  category?: ReportCategory;
+  /** Inclusive category set. An empty/undefined array means no category filter. */
+  categories?: readonly ReportCategory[];
 }
 
 export async function listReports(
@@ -72,7 +73,9 @@ export async function listReports(
   if (params.limit !== undefined) url.searchParams.set("limit", String(params.limit));
   if (params.cursor) url.searchParams.set("cursor", params.cursor);
   if (params.directive) url.searchParams.set("directive", params.directive);
-  if (params.category) url.searchParams.set("category", params.category);
+  if (params.categories && params.categories.length > 0) {
+    url.searchParams.set("category", params.categories.join(","));
+  }
 
   const res = await authedFetch(url.pathname + url.search);
   return jsonOrThrow<ListReportsResponse>(res);
