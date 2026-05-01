@@ -30,18 +30,23 @@ export interface ReportClassification {
 }
 
 /**
- * Prefixes that identify an extension-origin URI. The trailing colon (no
- * slashes) intentionally catches both forms a browser may emit:
+ * Prefixes that identify an extension-origin URI. The bare scheme name (no
+ * colon, no slashes) intentionally catches every form a browser may emit:
  *   - full URL form, e.g. "chrome-extension://EXTID/script.js"
- *   - redacted form Chrome uses for some reports, e.g. "chrome-extension:2:248774"
- *     (the ID is stripped for privacy; what's left is `scheme:LINE:COL`)
+ *   - redacted-with-colon form Chrome uses on some reports,
+ *     e.g. "chrome-extension:2:248774"
+ *   - bare-scheme form Chrome uses on others, where `sourceFile` is just
+ *     "chrome-extension" and the line/column live in their own fields
+ *
+ * URI schemes are reserved, so the absence of a trailing separator does
+ * not introduce realistic false positives.
  */
 const EXTENSION_PREFIXES = [
-  "chrome-extension:",
-  "moz-extension:",
-  "safari-web-extension:",
-  "safari-extension:",
-  "webkit-masked-url:",
+  "chrome-extension",
+  "moz-extension",
+  "safari-web-extension",
+  "safari-extension",
+  "webkit-masked-url",
 ];
 
 const BROWSER_INTERNAL_PREFIXES = ["chrome://", "about:"];

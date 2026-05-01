@@ -108,6 +108,15 @@ describe("classifyReport", () => {
       expect(c.category).toBe("extension");
     });
 
+    it("Chrome's bare-scheme source (just 'chrome-extension') is recognised", () => {
+      // Some Chrome versions put the bare scheme in sourceFile and the
+      // location info in lineNumber/columnNumber instead of formatting them
+      // into the URI. The classifier must still recognise the source as an
+      // extension.
+      const c = classifyReport("wss://www.walletlink.org/rpc", DOC, "chrome-extension");
+      expect(c.category).toBe("extension");
+    });
+
     it("moz-extension sourceFile is recognised", () => {
       const c = classifyReport(
         "https://api.example.com/x",
