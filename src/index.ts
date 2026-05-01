@@ -15,7 +15,7 @@ import { getAllowedOrigins, getDedupWindowMinutes, getKvNamespace, getKvTtlSecon
 import { parseRequest } from "./ingest";
 import { computeFingerprint, isDuplicate, recordDedup } from "./dedup";
 import { storeReport } from "./store";
-import { dispatchNotifications } from "./notify/index";
+import { dispatchNotifications, shouldNotify } from "./notify/index";
 import { handleListReports, handleGetReport } from "./api";
 import { requireAuth } from "./auth";
 
@@ -89,7 +89,7 @@ async function handleReportIngestion(
   // --- Parse + normalise ---
   let reports: NormalisedReport[];
   try {
-    reports = await parseRequest(request, env);
+    reports = await parseRequest(request);
   } catch (err) {
     if (err instanceof Response) return err;
     console.error("[ingest] Unexpected parse error:", err);
@@ -116,8 +116,8 @@ async function handleReportIngestion(
           // Record dedup entry (creates or increments)
           await recordDedup(fallbackKv, fingerprint, dedupWindow);
 
-          if (!dupe) {
-            // First occurrence — notify
+          if (!dupe && shouldNotify(env, report)) {
+            // First occurrence and not muted — notify
             await dispatchNotifications(env, report, workerUrl);
           }
         } catch (err) {

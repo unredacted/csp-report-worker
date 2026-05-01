@@ -5,9 +5,24 @@
  */
 
 import type { Env, NormalisedReport } from "../types";
-import { getNotifyWebhooks } from "../config";
+import { getMutedBlockedUriPrefixes, getNotifyWebhooks } from "../config";
 import { sendWebhooks } from "./webhook";
 import { sendEmails } from "./email";
+
+/**
+ * Decide whether a CSP report should fire email/webhook notifications.
+ *
+ * Reports whose `blockedUri` matches the configured mute prefixes are still
+ * stored in KV and counted in dedup state, but they do not page operators.
+ * This keeps the report log complete for forensic review while keeping
+ * inboxes focused on signals worth reading.
+ */
+export function shouldNotify(env: Env, report: NormalisedReport): boolean {
+  const prefixes = getMutedBlockedUriPrefixes(env);
+  if (prefixes.length === 0) return true;
+  if (!report.blockedUri) return true;
+  return !prefixes.some((p) => report.blockedUri.startsWith(p));
+}
 
 /**
  * Dispatch all configured notifications for a new CSP violation.

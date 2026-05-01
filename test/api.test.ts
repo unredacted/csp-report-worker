@@ -197,7 +197,7 @@ describe("POST /report", () => {
     expect(res.headers.get("Access-Control-Max-Age")).toBe("86400");
   });
 
-  it("returns 204 and stores nothing for an extension-noise report", async () => {
+  it("returns 204 and STORES extension-noise reports for forensic review", async () => {
     const kv = env.CSP_REPORTS as KVNamespace;
     const before = await kv.list({ prefix: "report:" });
     const beforeCount = before.keys.length;
@@ -218,11 +218,12 @@ describe("POST /report", () => {
     await ctx.flush();
     expect(res.status).toBe(204);
 
+    // The report is now stored even though notifications are muted.
     const after = await kv.list({ prefix: "report:" });
-    expect(after.keys.length).toBe(beforeCount);
+    expect(after.keys.length).toBe(beforeCount + 1);
   });
 
-  it("returns 204 (not 400) for an all-noise Reporting API array", async () => {
+  it("stores every entry of a Reporting API array including muted ones", async () => {
     const kv = env.CSP_REPORTS as KVNamespace;
     const before = await kv.list({ prefix: "report:" });
     const beforeCount = before.keys.length;
@@ -261,7 +262,7 @@ describe("POST /report", () => {
     expect(res.status).toBe(204);
 
     const after = await kv.list({ prefix: "report:" });
-    expect(after.keys.length).toBe(beforeCount);
+    expect(after.keys.length).toBe(beforeCount + 2);
   });
 });
 

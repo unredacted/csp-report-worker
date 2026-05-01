@@ -58,15 +58,16 @@ export function getEmailProvider(env: Env): EmailProviderType | null {
 }
 
 /**
- * Default `blockedUri` prefixes treated as noise and dropped at ingestion.
- * These are universally non-actionable: browser extensions and browser-internal
- * resources have no security signal value and only inflate KV writes and
- * notification volume.
+ * Default `blockedUri` prefixes whose reports are stored but do NOT trigger
+ * email/webhook notifications. Browser-extension and browser-internal sources
+ * have no security signal under typical attacker models, but the reports
+ * themselves are still useful as a passive monitoring log of visitor browser
+ * behaviour — so they are kept in KV and queryable via the API.
  *
- * Notable exclusions: `data:`, `blob:`, `inline`, and `eval` are kept because
- * they carry real XSS-related signal.
+ * Notable exclusions: `data:`, `blob:`, the literal `inline`, and `eval` are
+ * NOT in the default mute list — each can carry real XSS signal.
  */
-export const DEFAULT_NOISE_URI_PREFIXES: readonly string[] = [
+export const DEFAULT_MUTED_URI_PREFIXES: readonly string[] = [
   "chrome-extension://",
   "moz-extension://",
   "safari-web-extension://",
@@ -77,15 +78,16 @@ export const DEFAULT_NOISE_URI_PREFIXES: readonly string[] = [
 ];
 
 /**
- * Resolve the list of `blockedUri` prefixes that should be dropped at ingestion.
+ * Resolve the list of `blockedUri` prefixes whose reports should be muted
+ * (stored, but not notified about).
  *
- * - Unset/empty: use `DEFAULT_NOISE_URI_PREFIXES`.
- * - `"none"` (case-insensitive): empty list — disables filtering entirely.
+ * - Unset/empty: use `DEFAULT_MUTED_URI_PREFIXES`.
+ * - `"none"` (case-insensitive): empty list — every report fires notifications.
  * - Comma-separated string: explicit list, replaces the default.
  */
-export function getIgnoredBlockedUriPrefixes(env: Env): readonly string[] {
-  const raw = env.IGNORE_BLOCKED_URI_PREFIXES?.trim();
-  if (!raw) return DEFAULT_NOISE_URI_PREFIXES;
+export function getMutedBlockedUriPrefixes(env: Env): readonly string[] {
+  const raw = env.MUTE_BLOCKED_URI_PREFIXES?.trim();
+  if (!raw) return DEFAULT_MUTED_URI_PREFIXES;
   if (raw.toLowerCase() === "none") return [];
   return raw.split(",").map((p) => p.trim()).filter(Boolean);
 }

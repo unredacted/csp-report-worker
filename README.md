@@ -58,24 +58,29 @@ EMAIL_PROVIDER = "mailgun"  # or "ses", "resend", "cloudflare"
 DEDUP_WINDOW_MINUTES = "60"
 KV_TTL_SECONDS = "604800"
 ALLOWED_ORIGINS = ""
-IGNORE_BLOCKED_URI_PREFIXES = ""  # empty = filter browser-extension noise (default)
+MUTE_BLOCKED_URI_PREFIXES = ""  # empty = mute browser-extension noise from notifications (default)
 ```
 
-#### Filtering browser-extension noise
+#### Muting browser-extension noise from notifications
 
-By default, the worker drops reports whose `blockedUri` starts with a browser-extension or browser-internal scheme (`chrome-extension://`, `moz-extension://`, `safari-web-extension://`, `safari-extension://`, `webkit-masked-url://`, `chrome://`, `about:`). These are caused by user-installed browser extensions and have no security-signal value, but at scale they account for the majority of reports a public site receives.
+By default, the worker **stores every report** but **suppresses email/webhook notifications** for reports whose `blockedUri` starts with a browser-extension or browser-internal scheme (`chrome-extension://`, `moz-extension://`, `safari-web-extension://`, `safari-extension://`, `webkit-masked-url://`, `chrome://`, `about:`). These reports are caused by user-installed browser extensions: they don't indicate a problem with the site itself, but they are useful as a passive log of visitor browser behaviour and remain available for forensic review through the API.
 
-Configure the filter with `IGNORE_BLOCKED_URI_PREFIXES`:
+Configure the mute list with `MUTE_BLOCKED_URI_PREFIXES`:
 
 | Value | Behavior |
 |-------|----------|
 | Unset / empty | Use the built-in defaults above. |
-| `"none"` | Disable filtering entirely — every report is stored. |
-| `"prefix1,prefix2,..."` | Replace the default list with this explicit list. The operator takes full responsibility for what's filtered. |
+| `"none"` | Disable muting entirely — every report fires notifications. |
+| `"prefix1,prefix2,..."` | Replace the default list with this explicit list. The operator takes full responsibility for what's muted. |
 
-Filtered reports are dropped at ingestion: no KV write, no notification, no dedup entry. Each drop is logged at `[ingest] dropping noise: <blockedUri>` so you can confirm volume via `wrangler tail` or Logpush.
+Muted reports are still:
+- stored in KV,
+- counted toward dedup state,
+- returned by `GET /reports` and `GET /reports/:id`.
 
-`data:`, `blob:`, the literal `inline`, and `eval` are deliberately **not** in the default list — they can carry real XSS signal. If you do want to filter them on a specific deployment, add them to `IGNORE_BLOCKED_URI_PREFIXES`.
+Only the email/webhook dispatch is suppressed.
+
+`data:`, `blob:`, the literal `inline`, and `eval` are deliberately **not** in the default list — each can carry real XSS signal. If you want to mute them on a specific deployment, add them to `MUTE_BLOCKED_URI_PREFIXES`.
 
 ### 5. Set the API token (secret)
 

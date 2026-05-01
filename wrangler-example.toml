@@ -25,13 +25,16 @@ KV_TTL_SECONDS = "604800"
 # Only accept reports from these origins (comma-separated). Empty = accept all.
 ALLOWED_ORIGINS = ""
 
-# Comma-separated list of blockedUri prefixes to drop at ingestion (browser-extension
-# and browser-internal noise that has no security signal).
+# Comma-separated list of blockedUri prefixes whose reports are STORED but
+# do NOT trigger email/webhook notifications. Browser-extension and
+# browser-internal sources rarely indicate a security issue with the site
+# itself, but the reports are still useful as a passive log of visitor
+# browser behaviour and remain queryable via GET /reports.
 # Empty/unset = use built-in defaults (chrome-extension://, moz-extension://,
 # safari-web-extension://, safari-extension://, webkit-masked-url://, chrome://, about:).
-# Set to "none" to disable filtering entirely (every report is stored).
+# Set to "none" to fire notifications for every report.
 # Setting an explicit list replaces the defaults — the operator takes full responsibility.
-IGNORE_BLOCKED_URI_PREFIXES = ""
+MUTE_BLOCKED_URI_PREFIXES = ""
 
 # Email sender address (required for all email providers)
 EMAIL_FROM = ""
