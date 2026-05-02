@@ -28,6 +28,18 @@ updates:
       prefix: "deps"
       prefix-development: "deps-dev"
       include: "scope"
+    # Pin out major bumps that require migration work beyond a lockfile
+    # update. Drop these entries once someone has done the migration.
+    #
+    # vitest 4 + vitest-pool-workers 0.14+ ship a coupled API rewrite
+    # (cloudflareTest plugin instead of defineWorkersConfig, and KV/env
+    # access via cloudflare:workers requires the worker default export
+    # to be a WorkerEntrypoint subclass). See PRs #7 and #8.
+    ignore:
+      - dependency-name: "vitest"
+        versions: [">=4"]
+      - dependency-name: "@cloudflare/vitest-pool-workers"
+        versions: [">=0.14"]
     groups:
       cloudflare:
         patterns:
