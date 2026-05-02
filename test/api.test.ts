@@ -5,13 +5,15 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { env } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import { storeReport } from "../src/store";
 import { getKvNamespace } from "../src/config";
 import type { Env, NormalisedReport } from "../src/types";
 
-// We test by calling the worker's fetch handler directly
-import worker from "../src/index";
+// Tests call the underlying Hono app directly so they can pass an
+// explicit env/ctx; the WorkerEntrypoint default export just delegates
+// to it for the production runtime.
+import { app as worker } from "../src/index";
 
 const API_TOKEN = "test-secret-token";
 

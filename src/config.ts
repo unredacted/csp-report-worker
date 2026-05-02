@@ -106,19 +106,14 @@ export const INVERTED_TS_CEILING = 9_999_999_999_999;
 
 /**
  * Dynamically locate the KV namespace binding.
- * This avoids hardcoding "CSP_REPORTS" and scans the environment for
- * the first property that implements the KVNamespace interface.
+ * Avoids hardcoding the binding name. Matches by constructor name because
+ * JSRPC service-binding stubs (e.g. ASSETS) expose `.get`/`.put`/`.list`
+ * as call-anything stubs, so a duck-typed shape check would pick those up.
  */
 export function getKvNamespace(env: Env): KVNamespace {
   for (const key of Object.keys(env)) {
     const val = env[key] as any;
-    if (
-      val &&
-      typeof val === "object" &&
-      typeof val.put === "function" &&
-      typeof val.get === "function" &&
-      typeof val.list === "function"
-    ) {
+    if (val?.constructor?.name === "KvNamespace") {
       return val as KVNamespace;
     }
   }
