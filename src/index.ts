@@ -7,6 +7,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { WorkerEntrypoint } from "cloudflare:workers";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Context, Next } from "hono";
@@ -81,7 +82,13 @@ app.notFound(async (c) => {
   return c.json({ error: "Not found" }, 404);
 });
 
-export default app;
+export { app };
+
+export default class CspReportWorker extends WorkerEntrypoint<Env> {
+  override fetch(request: Request): Response | Promise<Response> {
+    return app.fetch(request, this.env, this.ctx);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Report ingestion handler

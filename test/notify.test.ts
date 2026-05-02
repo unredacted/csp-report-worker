@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { env } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import { shouldNotify } from "../src/notify/index";
 import type { Env, NormalisedReport } from "../src/types";
 import type { ReportCategory } from "../src/classify";

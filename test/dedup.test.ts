@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { env } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import { computeFingerprint, isDuplicate, recordDedup } from "../src/dedup";
 import { getKvNamespace } from "../src/config";
 import type { Env, NormalisedReport } from "../src/types";
