@@ -22,7 +22,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
-    "hono": "^4.12.16",
+    "hono": "^4.12.18",
     "lucide-svelte": "^1.0.0",
     "mimetext": "^3.0.28",
     "svelte": "^5.46.0",
