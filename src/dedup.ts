@@ -1,10 +1,16 @@
 /**
- * Deduplication — fingerprint computation and KV dedup window management.
+ * Fingerprint computation for issue grouping.
+ *
+ * Earlier versions also tracked a per-fingerprint dedup window in KV
+ * (`dedup:{fingerprint}` keys with count + firstSeen). M3 dropped that —
+ * D1 issues are now the dedup truth, and notifications gate on issue
+ * status transitions instead. computeFingerprint stays because issues.ts
+ * uses it as the per-property issue id.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import type { NormalisedReport, DedupEntry } from "./types";
+import type { NormalisedReport } from "./types";
 
 /**
  * Compute a dedup fingerprint for a report.
@@ -26,52 +32,4 @@ export async function computeFingerprint(report: NormalisedReport): Promise<stri
   return Array.from(new Uint8Array(hash))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-}
-
-/**
- * Check whether a fingerprint has been seen within the dedup window.
- *
- * @returns `true` if this is a new (unseen) fingerprint — notification should fire.
- *          `false` if it's a duplicate — notification should be suppressed.
- */
-export async function isDuplicate(
-  kv: KVNamespace,
-  fingerprint: string,
-): Promise<boolean> {
-  const key = `dedup:${fingerprint}`;
-  const existing = await kv.get<DedupEntry>(key, "json");
-  return existing !== null;
-}
-
-/**
- * Record a dedup entry. If one already exists, increment its count.
- * If it's new, create it.
- *
- * @param windowMinutes - TTL for the dedup key in minutes.
- */
-export async function recordDedup(
-  kv: KVNamespace,
-  fingerprint: string,
-  windowMinutes: number,
-): Promise<void> {
-  const key = `dedup:${fingerprint}`;
-  const ttlSeconds = windowMinutes * 60;
-
-  const existing = await kv.get<DedupEntry>(key, "json");
-
-  if (existing) {
-    // Increment count, preserve firstSeen, refresh TTL
-    const updated: DedupEntry = {
-      count: existing.count + 1,
-      firstSeen: existing.firstSeen,
-    };
-    await kv.put(key, JSON.stringify(updated), { expirationTtl: ttlSeconds });
-  } else {
-    // First occurrence
-    const entry: DedupEntry = {
-      count: 1,
-      firstSeen: new Date().toISOString(),
-    };
-    await kv.put(key, JSON.stringify(entry), { expirationTtl: ttlSeconds });
-  }
 }

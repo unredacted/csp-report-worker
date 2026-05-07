@@ -8,13 +8,13 @@
  */
 
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
 
 export default defineConfig({
   root: "dashboard",
-  plugins: [react(), tailwindcss()],
+  plugins: [svelte(), tailwindcss()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "dashboard/src"),
@@ -26,11 +26,12 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // Forward API calls to the Worker on `wrangler dev` (port 8787)
       "/health": "http://localhost:8787",
       "/auth": "http://localhost:8787",
       "/report": "http://localhost:8787",
       "/reports": "http://localhost:8787",
+      "/issues": "http://localhost:8787",
+      "/properties": "http://localhost:8787",
     },
   },
 });

@@ -42,6 +42,26 @@ EMAIL_FROM = ""
 # Email provider: "cloudflare-email", "cloudflare-routing", "mailgun", "ses", or "resend" (empty = email disabled)
 EMAIL_PROVIDER = ""
 
+# Per-issue rolling event-sample cap (default 100). Each issue keeps
+# this many representative event rows in D1 — older ones are pruned.
+EVENT_SAMPLE_CAP = "100"
+
+# Hours to suppress notifications after an issue is `resolved` before a
+# new report flips it back to `open`. Default: 24. Replaces the legacy
+# DEDUP_WINDOW_MINUTES var (which is still read for one release).
+RESURRECTION_GRACE_HOURS = "24"
+
+# Days to retain issues. The scheduled handler deletes issues whose
+# last_seen is older than this. Default 90. Set to "0" to disable.
+RETENTION_DAYS = "90"
+
+# JSON list seeded into the `properties` table at first request, when
+# no non-default property exists. Tokens are auto-generated; rotate via
+# `POST /properties/:id/rotate-token` once you've grabbed them from
+# `GET /properties` (or from the dashboard).
+# Example:
+# BOOTSTRAP_PROPERTIES = '[{"slug":"marketing","name":"Marketing site"},{"slug":"app","name":"Web app","emails":"ops@example.com"}]'
+
 # --- Cloudflare Email Service (if EMAIL_PROVIDER = "cloudflare-email") ---
 # Uses the [[send_email]] binding below. Onboard your sending domain in the
 # Cloudflare dashboard. Does not take over the zone's MX records.
@@ -67,6 +87,15 @@ AWS_SES_REGION = "us-east-1"
 [[kv_namespaces]]
 binding = "CSP_REPORTS"
 id = "<your-kv-namespace-id>"
+
+# D1 database for issues, properties, and per-issue event samples.
+# Create with: npx wrangler d1 create csp-report-worker
+# The schema lives in migrations/0001_init.sql and is auto-applied at cold start.
+# To apply manually (e.g. CI seeding): npx wrangler d1 execute DB --file migrations/0001_init.sql
+[[d1_databases]]
+binding = "DB"
+database_name = "csp-report-worker"
+database_id = "<your-d1-database-id>"
 
 # Workers Assets binding — serves the dashboard SPA from dist/.
 # `not_found_handling = "single-page-application"` lets client-side routing
@@ -110,4 +139,10 @@ run_worker_first = [
 # [[routes]]
 # pattern = "csp.yourdomain.com/*"
 # zone_name = "yourdomain.com"
+
+# --- Cron Triggers ---
+# Hourly maintenance: deletes issues older than RETENTION_DAYS (cascades to
+# their event samples + status log). Required for retention to do anything.
+[triggers]
+crons = ["0 * * * *"]
 

@@ -9,7 +9,7 @@
  */
 
 import type { NormalisedReport } from "../types";
-import { formatWebhookPayload } from "./format";
+import { formatWebhookPayload, type NotifyKind } from "./format";
 
 /**
  * POST notification payloads to all configured webhook URLs.
@@ -18,10 +18,12 @@ export async function sendWebhooks(
   webhookUrls: string[],
   report: NormalisedReport,
   workerUrl: string,
+  kind: NotifyKind = "new",
+  issueId?: string,
 ): Promise<void> {
   if (webhookUrls.length === 0) return;
 
-  const payload = formatWebhookPayload(report, workerUrl);
+  const payload = formatWebhookPayload(report, workerUrl, kind, issueId);
   const body = JSON.stringify(payload);
 
   const results = await Promise.allSettled(

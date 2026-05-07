@@ -6,10 +6,32 @@
 
 import type { Env } from "./types";
 
-/** Minutes to suppress duplicate fingerprints (default: 60). */
+/**
+ * @deprecated Use getResurrectionGraceHours instead. Retained for one
+ * release so existing wrangler.toml files keep parsing without churn.
+ */
 export function getDedupWindowMinutes(env: Env): number {
   const val = parseInt(env.DEDUP_WINDOW_MINUTES, 10);
   return Number.isFinite(val) && val > 0 ? val : 60;
+}
+
+/**
+ * Hours to suppress notifications after an issue is resolved before a new
+ * report flips it back to `open`. Default: 24h.
+ *
+ * Falls back to the legacy `DEDUP_WINDOW_MINUTES` (converted to hours) so
+ * existing deployments don't regress on first M3 deploy.
+ */
+export function getResurrectionGraceHours(env: Env): number {
+  const val = parseInt(env.RESURRECTION_GRACE_HOURS || "", 10);
+  if (Number.isFinite(val) && val > 0) return val;
+
+  const legacy = parseInt(env.DEDUP_WINDOW_MINUTES || "", 10);
+  if (Number.isFinite(legacy) && legacy > 0) {
+    return Math.max(1, Math.round(legacy / 60));
+  }
+
+  return 24;
 }
 
 /** TTL in seconds for stored reports (default: 604800 = 7 days). */
@@ -96,6 +118,25 @@ export function getMutedCategories(env: Env): readonly string[] {
   if (!raw) return DEFAULT_MUTED_CATEGORIES;
   if (raw.toLowerCase() === "none") return [];
   return raw.split(",").map((p) => p.trim()).filter(Boolean);
+}
+
+/** Per-issue rolling event-sample cap (default 100). Exposed so storage
+ *  growth can be tuned without a code change. */
+export function getEventSampleCap(env: Env): number {
+  const val = parseInt(env.EVENT_SAMPLE_CAP || "", 10);
+  return Number.isFinite(val) && val > 0 ? val : 100;
+}
+
+/**
+ * Days to retain issues before the scheduled handler deletes them.
+ * Default 90. Set to `0` (or any non-positive number) to disable retention.
+ */
+export function getRetentionDays(env: Env): number {
+  const raw = env.RETENTION_DAYS;
+  if (raw === undefined || raw === null || raw === "") return 90;
+  const val = parseInt(raw, 10);
+  if (!Number.isFinite(val)) return 90;
+  return val < 0 ? 0 : val;
 }
 
 /** Maximum request body size in bytes (64 KB). */

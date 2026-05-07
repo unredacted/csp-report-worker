@@ -5,7 +5,19 @@
  */
 
 import { getToken, clearToken } from "./auth";
-import type { ListReportsResponse, NormalisedReport, ReportCategory } from "./types";
+import type {
+  IssueDetailResponse,
+  IssueStatus,
+  ListIssuesResponse,
+  ListPropertiesResponse,
+  ListReportsResponse,
+  NormalisedReport,
+  PolicyPreviewResponse,
+  PolicySelection,
+  PolicySuggestions,
+  PropertyResponse,
+  ReportCategory,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -84,4 +96,129 @@ export async function listReports(
 export async function getReport(id: string): Promise<NormalisedReport> {
   const res = await authedFetch(`/reports/${encodeURIComponent(id)}`);
   return jsonOrThrow<NormalisedReport>(res);
+}
+
+// ---------------------------------------------------------------------------
+// Issues
+// ---------------------------------------------------------------------------
+
+export interface ListIssuesParams {
+  property?: string;
+  statuses?: readonly IssueStatus[];
+  directive?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export async function listIssues(params: ListIssuesParams = {}): Promise<ListIssuesResponse> {
+  const url = new URL("/issues", window.location.origin);
+  if (params.property) url.searchParams.set("property", params.property);
+  if (params.statuses && params.statuses.length > 0) {
+    url.searchParams.set("status", params.statuses.join(","));
+  }
+  if (params.directive) url.searchParams.set("directive", params.directive);
+  if (params.limit !== undefined) url.searchParams.set("limit", String(params.limit));
+  if (params.cursor) url.searchParams.set("cursor", params.cursor);
+
+  const res = await authedFetch(url.pathname + url.search);
+  return jsonOrThrow<ListIssuesResponse>(res);
+}
+
+export async function getIssue(id: string): Promise<IssueDetailResponse> {
+  const res = await authedFetch(`/issues/${encodeURIComponent(id)}`);
+  return jsonOrThrow<IssueDetailResponse>(res);
+}
+
+export async function patchIssue(
+  id: string,
+  status: IssueStatus,
+  reason?: string,
+): Promise<IssueDetailResponse> {
+  const res = await authedFetch(`/issues/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status, reason }),
+  });
+  return jsonOrThrow<IssueDetailResponse>(res);
+}
+
+// ---------------------------------------------------------------------------
+// Properties
+// ---------------------------------------------------------------------------
+
+export async function listProperties(): Promise<ListPropertiesResponse> {
+  const res = await authedFetch("/properties");
+  return jsonOrThrow<ListPropertiesResponse>(res);
+}
+
+export interface CreatePropertyParams {
+  slug: string;
+  name: string;
+  emails?: string;
+  webhooks?: string;
+  muteCategories?: string;
+}
+
+export async function createProperty(params: CreatePropertyParams): Promise<PropertyResponse> {
+  const res = await authedFetch("/properties", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return jsonOrThrow<PropertyResponse>(res);
+}
+
+export interface PatchPropertyParams {
+  name?: string;
+  emails?: string | null;
+  webhooks?: string | null;
+  muteCategories?: string | null;
+}
+
+export async function patchProperty(
+  id: string,
+  params: PatchPropertyParams,
+): Promise<PropertyResponse> {
+  const res = await authedFetch(`/properties/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return jsonOrThrow<PropertyResponse>(res);
+}
+
+export async function rotateIngestToken(id: string): Promise<PropertyResponse> {
+  const res = await authedFetch(`/properties/${encodeURIComponent(id)}/rotate-token`, {
+    method: "POST",
+  });
+  return jsonOrThrow<PropertyResponse>(res);
+}
+
+export async function archiveProperty(id: string): Promise<PropertyResponse> {
+  const res = await authedFetch(`/properties/${encodeURIComponent(id)}/archive`, {
+    method: "POST",
+  });
+  return jsonOrThrow<PropertyResponse>(res);
+}
+
+// ---------------------------------------------------------------------------
+// Policy assistant
+// ---------------------------------------------------------------------------
+
+export async function getPolicySuggestions(propertyId: string): Promise<PolicySuggestions> {
+  const res = await authedFetch(`/properties/${encodeURIComponent(propertyId)}/policy-suggestions`);
+  return jsonOrThrow<PolicySuggestions>(res);
+}
+
+export async function previewPolicy(
+  propertyId: string,
+  baseline: string,
+  selections: PolicySelection[],
+): Promise<PolicyPreviewResponse> {
+  const res = await authedFetch(`/properties/${encodeURIComponent(propertyId)}/policy-preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ baseline, selections }),
+  });
+  return jsonOrThrow<PolicyPreviewResponse>(res);
 }

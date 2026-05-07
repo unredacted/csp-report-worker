@@ -42,7 +42,15 @@ describe("formatPlainText", () => {
     expect(text).toContain("https://example.com/page");
     expect(text).toContain("12"); // line number
     expect(text).toContain("abc123def456"); // report ID
+    // No issueId given → falls back to /reports/<reportId>
     expect(text).toContain(`${WORKER_URL}/reports/abc123def456`);
+  });
+
+  it("links to /issues/<issueId> when issueId is provided", () => {
+    const text = formatPlainText(REPORT, WORKER_URL, "new", "default:fingerprint123");
+    expect(text).toContain(`${WORKER_URL}/issues/default%3Afingerprint123`);
+    expect(text).not.toContain(`${WORKER_URL}/reports/abc123def456`);
+    expect(text).toContain("View issue:");
   });
 
   it("should handle missing source file", () => {
@@ -71,7 +79,14 @@ describe("formatHtml", () => {
     expect(html).toContain("script-src");
     expect(html).toContain("https://evil.com/script.js");
     expect(html).toContain("https://example.com/page");
+    // No issueId given → falls back to /reports/<reportId>
     expect(html).toContain(`${WORKER_URL}/reports/abc123def456`);
+  });
+
+  it("links to /issues/<issueId> when issueId is provided", () => {
+    const html = formatHtml(REPORT, WORKER_URL, "new", "default:fingerprint123");
+    expect(html).toContain(`${WORKER_URL}/issues/default%3Afingerprint123`);
+    expect(html).toContain("View issue");
   });
 
   it("should escape HTML entities", () => {
@@ -161,7 +176,17 @@ describe("formatWebhookPayload", () => {
     expect(payload.source).toBe("csp-report-worker");
     expect(payload.event).toBe("csp-violation");
     expect(payload.report).toBe(REPORT);
+    // No issueId given → falls back to /reports/<reportId>
     expect(payload.dashboard_url).toBe(`${WORKER_URL}/reports/abc123def456`);
+    expect(payload.issue_id).toBeNull();
+  });
+
+  it("dashboard_url + issue_id reflect issueId when provided", () => {
+    const payload = formatWebhookPayload(REPORT, WORKER_URL, "new", "default:fingerprint123");
+    expect(payload.dashboard_url).toBe(
+      `${WORKER_URL}/issues/default%3Afingerprint123`,
+    );
+    expect(payload.issue_id).toBe("default:fingerprint123");
   });
 
   it("should include summary", () => {
