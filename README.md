@@ -1,393 +1,447 @@
 # csp-report-worker
 
-A Cloudflare Worker that accepts [CSP violation reports](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP) from browsers, deduplicates them, stores them in Workers KV, and forwards notifications via webhooks and pluggable email providers.
+A Cloudflare Worker that ingests [CSP violation reports](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP), groups them into **persistent issues** with a triage workflow, suggests CSP policy improvements, and notifies via email + webhooks — all on Cloudflare KV + D1, with a Svelte 5 dashboard bundled into the same Worker.
 
-## Features
+## What it does
 
-- **Dual-format ingestion** — accepts both legacy `report-uri` (`application/csp-report`) and modern Reporting API v1 `report-to` (`application/reports+json`) formats
-- **Deduplication** — SHA-256 fingerprint-based suppression window prevents notification floods from repeated violations
-- **KV storage** — all reports stored with configurable TTL, retrievable via authenticated API
-- **Webhook notifications** — fire-and-forget POST to Slack, Discord, or any HTTP endpoint
-- **Pluggable email providers** — send via Cloudflare Email Service, Cloudflare Email Routing, Mailgun, AWS SES, or Resend
-- **Edge-native** — runs entirely on Cloudflare's edge with no Node.js dependencies
+- **Dual-format ingest** — accepts both legacy `report-uri` (`application/csp-report`) and the modern Reporting API v1 (`application/reports+json`).
+- **Per-property routing** — each site gets its own `POST /r/{slug}?t={token}` ingest URL with token-gated auth. Falls back to a `default` property for the legacy `/report` path.
+- **Issue grouping** — every report's deterministic SHA-256 fingerprint becomes the primary key of a per-property issue. The 10,000th occurrence of the same violation increments a counter, not a row.
+- **Triage workflow** — issues move through `open → acknowledged → resolved` (or `→ ignored` from anywhere). Resolved issues auto-reopen if the violation reappears past a configurable grace window (default 24h), with a `[resurrected]` notification subject.
+- **Notification gating** — emails + webhooks fire only on `null → open` (new) and `resolved → open` (resurrection) transitions. No more inbox flood from one bad ad-network beacon hitting 50,000 visitors.
+- **Per-property notification overrides** — each property can specify its own `notify_emails`, `notify_webhooks`, and `mute_categories`, falling back to the global env defaults when null.
+- **Source classification** — every report is bucketed at ingest as one of `extension | browser-internal | inline | data | blob | eval | same-origin | external | unknown`. The first two are muted from notifications by default since they're noise.
+- **CSP policy assistant** — derives suggested `script-src` / `style-src` / `img-src` etc. additions from open issues, ranked by event count. Tick what you accept, get a copy-pasteable header. `inline` and `eval` are surfaced as opt-in toggles with risk warnings.
+- **Cloudflare context capture (no IP)** — every event sample stores `country`, `asn`, `as_organization`, `colo`, `cf-ray`, and `http_protocol`. **Never the client IP.** The dashboard surfaces top-N breakdowns per issue.
+- **Retention** — a scheduled handler (cron-driven) deletes issues whose `last_seen` is older than `RETENTION_DAYS` (default 90).
+- **Dashboard** — Svelte 5 + TanStack Query + Tailwind v4 + bits-ui. Bearer-token auth (sessionStorage). Pages: Issues, Issue detail, Properties, Policy assistant, Raw events.
+- **5 email providers** — Cloudflare Email Service, Cloudflare Email Routing, Mailgun, AWS SES, Resend.
 
-## Quick Start
+## Architecture
 
-### 1. Clone and install
+```
+                                        Browsers
+                                            │
+   POST /r/{slug}?t={token}        POST /report (legacy fallback)
+            │                                │
+            ▼                                ▼
+       resolve property              attribute to "default" property
+      (slug + token)                         │
+            └──────────────┬─────────────────┘
+                           ▼
+                  parse + normalise
+                  extract CF context (no IP)
+                           ▼
+                       204 returned
+                           │
+                  ctx.waitUntil():
+                  ├── KV: storeReport ─────────────── 7-day TTL
+                  ├── D1: upsertIssue (count++, last_seen=now)
+                  │       insertEvent (country, ASN, …) — capped at EVENT_SAMPLE_CAP
+                  └── if transition is `created` or `resurrected`:
+                          dispatchNotifications(property, kind)
+                              ├── webhooks (per-property override or global)
+                              └── email (per-property override or global)
+
+   GET  /issues, /issues/:id              cron (hourly):
+   PATCH /issues/:id                          retention sweep
+   GET/POST /properties, /properties/:id      DELETE issues WHERE last_seen < cutoff
+   POST /properties/:id/rotate-token          (cascades to events + status log)
+   POST /properties/:id/archive
+   GET  /properties/:id/policy-suggestions
+   POST /properties/:id/policy-preview
+```
+
+## Quick start
 
 ```bash
 git clone https://github.com/unredacted/csp-report-worker.git
 cd csp-report-worker
 npm install
-```
-
-### 2. Create your config
-
-```bash
 cp wrangler-example.toml wrangler.toml
 ```
 
-> **Note:** `wrangler.toml` is gitignored. Your local config (with real KV namespace IDs, webhook URLs, etc.) will not be committed.
+`wrangler.toml` is gitignored — you'll fill in the IDs below.
 
-### 3. Create a KV namespace
+### 1. Create the KV namespace and D1 database
 
 ```bash
 npx wrangler kv namespace create CSP_REPORTS
+npx wrangler d1 create csp-report-worker
 ```
 
-Copy the output ID into your `wrangler.toml`:
+Paste the IDs into your `wrangler.toml`:
 
 ```toml
 [[kv_namespaces]]
 binding = "CSP_REPORTS"
-id = "paste-your-id-here"
+id = "..."
+
+[[d1_databases]]
+binding = "DB"
+database_name = "csp-report-worker"
+database_id = "..."
 ```
 
-> **Tip:** The worker dynamically auto-discovers the KV namespace at runtime, so the `binding` name can be whatever you prefer (e.g. `KV`, `STORAGE`, `CSP_REPORTS`).
+The KV binding name is auto-discovered by constructor, so you can rename it if you prefer (e.g. `KV`). The D1 binding follows the same pattern.
 
-### 4. Configure environment variables
+The schema in `migrations/0001_init.sql` is auto-applied at first request. The DDL uses `CREATE TABLE / INDEX IF NOT EXISTS`, so applying it manually beforehand (or running it twice) is safe:
 
-Edit your `wrangler.toml` to set notification targets:
+```bash
+npx wrangler d1 execute DB --remote --file migrations/0001_init.sql
+```
+
+If you do seed manually, also mark the migration as applied so the runtime runner skips it cleanly:
+
+```bash
+npx wrangler d1 execute DB --remote \
+  --command "INSERT OR IGNORE INTO _migrations (name, applied_at) VALUES ('0001_init', datetime('now'))"
+```
+
+### 2. Configure environment variables
+
+Edit `wrangler.toml` `[vars]`:
 
 ```toml
 [vars]
 NOTIFY_EMAILS = "security@example.com,ops@example.com"
-NOTIFY_WEBHOOKS = "https://hooks.slack.com/services/T.../B.../xxx"
+NOTIFY_WEBHOOKS = "https://hooks.slack.com/services/..."
 EMAIL_FROM = "csp-reports@yourdomain.com"
-EMAIL_PROVIDER = "mailgun"  # or "ses", "resend", "cloudflare-email", "cloudflare-routing"
-DEDUP_WINDOW_MINUTES = "60"
-KV_TTL_SECONDS = "604800"
-ALLOWED_ORIGINS = ""
-MUTE_CATEGORIES = ""  # empty = mute extension + browser-internal noise from notifications (default)
+EMAIL_PROVIDER = "mailgun"  # or "ses" | "resend" | "cloudflare-email" | "cloudflare-routing"
+
+# Issue lifecycle
+RESURRECTION_GRACE_HOURS = "24"   # how long after `resolved` to suppress notifications
+EVENT_SAMPLE_CAP = "100"          # max event samples per issue
+RETENTION_DAYS = "90"             # 0 = disable retention
+
+# Notification mute set (categories that are stored but never paged):
+MUTE_CATEGORIES = ""              # empty = default (extension + browser-internal); "none" = page on everything
 ```
 
-#### Muting browser-extension noise from notifications
-
-By default, the worker **stores every report** but **suppresses email/webhook notifications** for reports in the `extension` or `browser-internal` category. Each report is classified at ingestion using both `blockedUri` *and* `sourceFile`, so an extension-injected script reaching a legitimate-looking external host is still correctly identified as an extension report. These reports are still useful as a passive log of visitor browser behaviour and remain available for forensic review through the API.
-
-Configure the mute list with `MUTE_CATEGORIES`:
-
-| Value | Behavior |
-|-------|----------|
-| Unset / empty | Use the built-in defaults: `extension`, `browser-internal`. |
-| `"none"` | Disable muting entirely — every report fires notifications. |
-| `"cat1,cat2,..."` | Replace the default list with this explicit list. |
-
-Valid categories: `extension`, `browser-internal`, `inline`, `data`, `blob`, `eval`, `same-origin`, `external`, `unknown`.
-
-Muted reports are still:
-- stored in KV,
-- counted toward dedup state,
-- returned by `GET /reports` and `GET /reports/:id`.
-
-Only the email/webhook dispatch is suppressed.
-
-`inline`, `eval`, `data`, `blob`, `same-origin`, and `external` are deliberately **not** in the default mute list — each can carry real signal.
-
-### 5. Set the API token (secret)
+### 3. Set the API token (secret)
 
 ```bash
 npx wrangler secret put API_TOKEN
 ```
 
-This token is used to authenticate `GET /reports` API requests.
+This token authenticates dashboard logins and all `GET /reports`, `GET /issues`, `GET /properties`, etc. endpoints.
 
-### 6. Deploy
+### 4. Deploy
 
 ```bash
 npm run deploy
 ```
 
-### 7. Custom domain (optional)
+This builds the dashboard SPA into `dist/` and runs `wrangler deploy`.
 
-By default the worker is available at `https://csp-report-worker.<your-subdomain>.workers.dev`. To serve it on your own domain (e.g. `csp.yourdomain.com`):
+### 5. Point your CSP at the worker
 
-1. Ensure the domain is on a Cloudflare zone in your account
-2. Add a custom domain route in your `wrangler.toml`:
-
-```toml
-[[routes]]
-pattern = "csp.yourdomain.com/*"
-custom_domain = true
-```
-
-3. Redeploy with `npm run deploy` — Wrangler will automatically create the DNS record
-
-> **Tip:** You can also use route patterns if you prefer to manage DNS manually. See the examples in `wrangler-example.toml`.
-
-### 8. Configure your CSP header
-
-Point your site's CSP header at the worker (replace the URL with your custom domain or workers.dev address):
+For the **default catch-all** path:
 
 ```
 Content-Security-Policy: default-src 'self'; script-src 'self'; report-uri https://csp.yourdomain.com/report
 ```
 
-For the modern Reporting API:
+Or use the Reporting API:
 
 ```
-Content-Security-Policy: default-src 'self'; script-src 'self'
-Reporting-Endpoints: csp-endpoint="https://csp.yourdomain.com/report"
 Content-Security-Policy: default-src 'self'; script-src 'self'; report-to csp-endpoint
+Reporting-Endpoints: csp-endpoint="https://csp.yourdomain.com/report"
 ```
 
+For **per-site routing** (recommended once you have multiple properties), create the property in the dashboard or via `POST /properties`, then:
 
-## API Reference
+```
+Content-Security-Policy: default-src 'self'; script-src 'self'; report-uri https://csp.yourdomain.com/r/marketing?t=YOUR-INGEST-TOKEN
+```
 
-### Report Ingestion
+The token survives in browser DevTools and request logs — treat it like a low-privilege identifier, not a secret. Rotate via `POST /properties/:id/rotate-token` whenever needed.
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `POST` | `/report` | Primary ingestion endpoint |
-| `POST` | `/report/csp` | Alias (for `report-uri` convention) |
+## Properties & per-site routing
 
-Both return `204 No Content` on success. Browsers expect this and do not read the body.
+Each property is its own scope: separate ingest URL, separate issue list, optional per-property notification routing. The synthetic `default` property exists from cold start and catches `/report` and `/report/csp` traffic so legacy deployments don't break.
 
-### Health & auth probes
+### Bootstrap properties from env
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/health` | Returns `204` — uptime checks (no auth) |
-| `GET` | `/auth/check` | Returns `204` for a valid `Authorization: Bearer <API_TOKEN>` header, otherwise `401`/`403`. Used by the dashboard login flow to validate a token without side effects. |
+Set `BOOTSTRAP_PROPERTIES` in `wrangler.toml` to seed the `properties` table on first request when no non-default property exists. Tokens are auto-generated; pull them from `GET /properties` (the dashboard does this for you):
 
-### Reports API (authenticated)
+```toml
+BOOTSTRAP_PROPERTIES = '''[
+  {"slug":"marketing","name":"Marketing site"},
+  {"slug":"app","name":"Web app","emails":"app-sec@example.com"}
+]'''
+```
 
-All `GET` endpoints require `Authorization: Bearer <API_TOKEN>`.
+### Manage properties
 
-#### `GET /reports`
-
-List recent reports (newest first).
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `limit` | `50` | Number of reports (max 200) |
-| `cursor` | — | Pagination cursor from previous response |
-| `directive` | — | Filter by violated directive (e.g. `script-src`) |
-| `category` | — | Filter by source category. Accepts a single value or a comma-separated list. |
-
-Valid `category` values: `extension`, `browser-internal`, `inline`, `data`, `blob`, `eval`, `same-origin`, `external`, `unknown`. Categories are derived at ingestion from `blockedUri` + `documentUri` + `sourceFile` and stored on every report.
+The dashboard's **Properties** page has the UI for create / rotate-token / archive. Equivalent CLI calls:
 
 ```bash
-# Recent reports
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  https://your-worker.workers.dev/reports?limit=10&directive=script-src
+TOK=$(cat ~/.csp-token)
+BASE=https://csp.yourdomain.com
 
-# Manual audit of muted browser-extension reports
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  https://your-worker.workers.dev/reports?category=extension,browser-internal
+# Create
+curl -X POST "$BASE/properties" \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"slug":"marketing","name":"Marketing site","emails":"ops@example.com"}'
 
-# High-signal inline-script and eval violations only
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  https://your-worker.workers.dev/reports?category=inline,eval
+# List (tokens redacted to last 4 chars)
+curl -H "Authorization: Bearer $TOK" "$BASE/properties"
+
+# Rotate token
+curl -X POST -H "Authorization: Bearer $TOK" \
+  "$BASE/properties/<id>/rotate-token"
+
+# Archive (soft-delete; reports under that slug start 404'ing)
+curl -X POST -H "Authorization: Bearer $TOK" \
+  "$BASE/properties/<id>/archive"
 ```
 
-Response:
+## Issue triage
+
+Open the dashboard at the worker's URL, log in with the `API_TOKEN`, and you land on **Issues** — a triageable queue scoped to the selected property.
+
+**Status flow:**
+
+- `open` — new issues land here
+- `acknowledged` — "I've seen it, working on it" (no more notifications, count still grows)
+- `resolved` — fixed (no more notifications, but auto-reopens past `RESURRECTION_GRACE_HOURS` if it fires again)
+- `ignored` — silenced forever (count still grows, never notifies, never auto-reopens)
+
+**Notifications fire on:**
+
+- `null → open` (new fingerprint) — subject: `CSP Violation: <directive> — <category> on <docUri>`
+- `resolved → open` (auto-reopen past grace) — same subject prefixed with `[resurrected]`
+
+Acknowledged / ignored issues never page, regardless of how many events they accumulate. Per-property `mute_categories` overrides the global `MUTE_CATEGORIES` env var (default: `extension,browser-internal`).
+
+### What gets sent
+
+**Email** (plain text + HTML alternative):
+- Subject identifies directive, source category, and document host so a security engineer can triage from the inbox alone.
+- Body lists violated/effective directive, disposition, source classification, document URI, blocked URI, source file + line + column, referrer, status code, user-agent, report format, timestamp, fingerprint, and the original policy.
+- Includes a `View issue →` link to `https://<your-worker>/issues/<issueId>` — the triage view with status controls (Acknowledge / Resolve / Ignore) and country/ASN/browser breakdowns.
+
+**Webhook** (POST, JSON, Slack-compatible top-level `text` field):
+
 ```json
 {
-  "reports": [{ "id": "...", "violatedDirective": "script-src", ... }],
-  "cursor": "..."
+  "text": "`script-src` violation on https://example.com/page — blocked https://evil.example/x.js",
+  "source": "csp-report-worker",
+  "event": "csp-violation",
+  "kind": "new",
+  "issue_id": "default:bdaa77f1917d9a5d1aebb6ea68e708de13308cbfc8edd5f86b8b6ec505e746b0",
+  "report": { /* full NormalisedReport — same shape as GET /reports/:id */ },
+  "summary": "...",
+  "dashboard_url": "https://csp.yourdomain.com/issues/default%3Abdaa77f..."
 }
 ```
 
-#### `GET /reports/:id`
+Slack accepts the top-level `text` as the message body. The `kind` field is `"new"` or `"resurrection"`; resurrected events also have `[resurrected]` prefixed in `text` and `summary`. The `issue_id` field lets webhook consumers deep-link to the triage view directly.
 
-Fetch a single report by its SHA-256 ID.
+## CSP policy assistant
 
-```bash
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  https://your-worker.workers.dev/reports/abc123...
+The **Policy** page reads all `open` issues for the selected property, groups them by directive, ranks by event count, and proposes additions:
+
+| Source category | Suggestion |
+|---|---|
+| `external` | The blocked URI's origin (e.g. `https://cdn.partner.com`) |
+| `data` | `data:` |
+| `blob` | `blob:` |
+| `inline` | `'unsafe-inline'` (with risk warning) |
+| `eval` | `'unsafe-eval'` (with risk warning) |
+| `extension`, `browser-internal`, `same-origin`, `unknown` | Never suggested |
+
+Paste your current header in the **Baseline policy** box, tick the suggestions you accept, and the **Preview** updates live. Hit Copy and paste into your origin's CSP header. The "Mark backing issues as acknowledged" button bulk-acks all the issues your selected suggestions came from — once you've added the token to your policy, they shouldn't keep nagging.
+
+## API reference
+
+All non-ingest endpoints require `Authorization: Bearer <API_TOKEN>`.
+
+### Ingest (no auth)
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/report` | Legacy catch-all — attributes to `default` property |
+| `POST` | `/report/csp` | Alias for `/report` |
+| `POST` | `/r/:slug?t=<token>` | Per-property — token validated; `X-Ingest-Token` header also accepted |
+
+All return `204 No Content` on success. Browsers expect this.
+
+### Health & auth probes
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/health` | 204 — uptime probe (no auth) |
+| `GET` | `/auth/check` | 204 on valid Bearer token (no side effects) |
+
+### Issues
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/issues?property=<id>&status=open,acknowledged&directive=script-src&limit=50&cursor=...` | Keyset-paginated list |
+| `GET` | `/issues/:id` | Issue + last 100 event samples + country/ASN/browser breakdowns |
+| `PATCH` | `/issues/:id` | Body `{"status": "acknowledged" \| "resolved" \| "ignored" \| "open", "reason"?: "..."}` |
+
+### Properties
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/properties` | List active properties (tokens redacted to last 4 chars) |
+| `POST` | `/properties` | Body `{"slug":"...", "name":"...", "emails"?:"...", "webhooks"?:"...", "muteCategories"?:"..."}` — returns the full token **once** |
+| `GET` | `/properties/:id` | Detail (token redacted) |
+| `PATCH` | `/properties/:id` | Update notification overrides |
+| `POST` | `/properties/:id/rotate-token` | Generates a new token, returns it once |
+| `POST` | `/properties/:id/archive` | Soft-delete (cannot be undone via API) |
+
+### Policy assistant
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/properties/:id/policy-suggestions` | Grouped + ranked suggestions |
+| `POST` | `/properties/:id/policy-preview` | Body `{"baseline": "...", "selections": [{"directive":"script-src","value":"https://x.com"}]}` → `{"policy":"..."}` |
+
+### Reports (raw event log, KV-backed)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/reports?limit=50&cursor=...&directive=script-src&category=external` | TTL-bounded raw stream — kept for debugging |
+| `GET` | `/reports/:id` | Single normalised report |
+
+## Configuration reference
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `NOTIFY_EMAILS` | `""` | Comma-separated email recipients (global default; per-property override available) |
+| `NOTIFY_WEBHOOKS` | `""` | Comma-separated webhook URLs (global default; per-property override available) |
+| `EMAIL_FROM` | `""` | Sender address — required for all email providers |
+| `EMAIL_PROVIDER` | unset | One of `cloudflare-email \| cloudflare-routing \| mailgun \| ses \| resend` |
+| `MUTE_CATEGORIES` | `extension,browser-internal` | Categories whose reports are stored but never paged. `"none"` = mute nothing. Per-property override available. |
+| `RESURRECTION_GRACE_HOURS` | `24` | Hours after `resolved` before a new report auto-reopens an issue |
+| `EVENT_SAMPLE_CAP` | `100` | Max event samples kept per issue (older pruned at insert time) |
+| `RETENTION_DAYS` | `90` | Days to keep issues before the cron sweep deletes them. `0` = disabled. Requires `[triggers] crons` in `wrangler.toml`. |
+| `KV_TTL_SECONDS` | `604800` | TTL for raw-report KV writes (7 days) |
+| `ALLOWED_ORIGINS` | `""` | If set, restrict ingest to these origins (CSV) |
+| `BOOTSTRAP_PROPERTIES` | unset | JSON list seeded into `properties` at first request (only when no non-default property exists) |
+| `DEDUP_WINDOW_MINUTES` | — | **Deprecated** — replaced by `RESURRECTION_GRACE_HOURS` (still read for one release) |
+
+Email-provider-specific vars (`MAILGUN_DOMAIN`, `MAILGUN_REGION`, `AWS_SES_REGION`, plus secrets `MAILGUN_API_KEY`, `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY`, `RESEND_API_KEY`) — see "Email setup" below.
+
+### Cron triggers
+
+For `RETENTION_DAYS` to do anything, `wrangler.toml` must declare a cron:
+
+```toml
+[triggers]
+crons = ["0 * * * *"]  # hourly
 ```
 
-## Dashboard
+The scheduled handler runs `runRetentionSweep`, which deletes issues whose `last_seen` is older than the cutoff. `issue_events` and `issue_status_log` cascade-delete via foreign-key `ON DELETE CASCADE`.
 
-The Worker also serves a small dashboard SPA from `/`. It uses the same Bearer token as the API for authentication and is built with React 19, Tailwind CSS v4, and shadcn/ui. The login screen prompts for the API token and stores it in `sessionStorage` (cleared when the browser closes); every API call is sent with `Authorization: Bearer <token>`.
+## Privacy: no IP capture
 
-```bash
-# Start the worker locally
-npm run dev
+The worker reads CF-supplied request context — `country`, `asn`, `as_organization`, `colo`, `cf-ray`, `http_protocol` — and stores it on each event sample. **It never reads `cf-connecting-ip`, `x-forwarded-for`, `x-real-ip`, or any other IP header.** The `issue_events` table has no `ip` column.
 
-# In another terminal, start the dashboard's dev server (with API proxy)
-npm run dev:dashboard
-```
+A test (`test/db.test.ts`) and a privacy assertion (`test/cf-context.test.ts`) verify this. If you want IP capture for forensics, that should be a deliberate, opt-in, documented schema change — don't add it casually.
 
-The dashboard build outputs to `dist/` and is bundled into the Worker by Wrangler via the `[assets]` binding in `wrangler.toml`. `npm run deploy` builds the SPA before invoking `wrangler deploy`.
+## Email setup
 
-## Architecture
+The `EMAIL_PROVIDER` variable selects the backend:
 
-```
-Browser                    Worker                         External
-  │                          │                               │
-  ├─POST /report────────────►│                               │
-  │  (csp-report or          │──parse + normalise            │
-  │   reports+json)          │──compute fingerprint          │
-  │                          │──check dedup (KV)             │
-  │◄─── 204 ─────────────────│                               │
-  │                          │                               │
-  │                     ctx.waitUntil()                      │
-  │                          │──store report (KV)            │
-  │                          │──if new: notify               │
-  │                          │   ├──webhook POST ───────────►│
-  │                          │   └──email (provider) ────────►│
-```
+| Provider | `EMAIL_PROVIDER` | Required vars | Required secrets |
+|---|---|---|---|
+| Cloudflare Email Service | `cloudflare-email` | — | `[[send_email]]` binding |
+| Cloudflare Email Routing | `cloudflare-routing` | — | `[[send_email]]` binding |
+| Mailgun | `mailgun` | `MAILGUN_DOMAIN`, `MAILGUN_REGION` | `MAILGUN_API_KEY` |
+| AWS SES | `ses` | `AWS_SES_REGION` | `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY` |
+| Resend | `resend` | — | `RESEND_API_KEY` |
 
-### Email Providers
+Leave `EMAIL_PROVIDER` empty to disable email. Webhooks still fire if `NOTIFY_WEBHOOKS` is set.
 
-The `EMAIL_PROVIDER` variable selects the email backend. Set it to one of:
-
-| Provider | `EMAIL_PROVIDER` | Required Vars | Required Secrets |
-|----------|-----------------|---------------|------------------|
-| **Cloudflare Email Service** | `cloudflare-email` | — | — (uses `[[send_email]]` binding) |
-| **Cloudflare Email Routing** | `cloudflare-routing` | — | — (uses `[[send_email]]` binding) |
-| **Mailgun** | `mailgun` | `MAILGUN_DOMAIN`, `MAILGUN_REGION` | `MAILGUN_API_KEY` |
-| **AWS SES** | `ses` | `AWS_SES_REGION` | `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY` |
-| **Resend** | `resend` | — | `RESEND_API_KEY` |
-
-Leave `EMAIL_PROVIDER` empty to disable email notifications entirely.
-
-Secrets are set via `wrangler secret put <NAME>` and are never stored in config files.
-
-### KV Key Design
-
-| Key pattern | Value | TTL |
-|-------------|-------|-----|
-| `report:{invertedTs}:{id}` | Full normalised report JSON | `KV_TTL_SECONDS` |
-| `idx:{id}` | Pointer to primary key | `KV_TTL_SECONDS` |
-| `dedup:{fingerprint}` | `{ count, firstSeen }` | `DEDUP_WINDOW_MINUTES × 60` |
-
-**Inverted timestamp** (`9999999999999 - Date.now()`) ensures KV's lexicographic `list()` returns newest reports first, enabling efficient cursor-based pagination.
-
-### Deduplication
-
-The fingerprint is a SHA-256 hash of:
-```
-blockedUri | violatedDirective | documentUri | sourceFile:lineNumber
-```
-
-This groups identical violations. When a report's fingerprint is seen for the first time in its dedup window, a notification fires. Subsequent duplicates within the window are stored but do not trigger notifications.
-
-## Email Setup
-
-Email is optional — set `EMAIL_PROVIDER` to enable it. All providers require `EMAIL_FROM` to be set.
-
-### Mailgun
-
-1. Create a Mailgun account and verify your sending domain
-2. Set your vars:
-   ```toml
-   EMAIL_PROVIDER = "mailgun"
-   MAILGUN_DOMAIN = "mg.yourdomain.com"
-   MAILGUN_REGION = "us"  # or "eu"
-   ```
-3. Set the API key secret: `wrangler secret put MAILGUN_API_KEY`
-
-### AWS SES
-
-1. Verify your sender domain/email in the [SES console](https://console.aws.amazon.com/ses/)
-2. Create an IAM user with `ses:SendEmail` permission
-3. Set your vars:
-   ```toml
-   EMAIL_PROVIDER = "ses"
-   AWS_SES_REGION = "us-east-1"
-   ```
-4. Set secrets:
-   ```bash
-   wrangler secret put AWS_SES_ACCESS_KEY_ID
-   wrangler secret put AWS_SES_SECRET_ACCESS_KEY
-   ```
-
-### Resend
-
-1. Create a [Resend](https://resend.com) account and add your domain
-2. Set your vars:
-   ```toml
-   EMAIL_PROVIDER = "resend"
-   ```
-3. Set the API key secret: `wrangler secret put RESEND_API_KEY`
+Secrets are set via `wrangler secret put <NAME>` — never in `wrangler.toml`.
 
 ### Cloudflare Email Service (recommended)
 
-Uses the `[[send_email]]` worker binding backed by Cloudflare's transactional Email Service — [docs](https://developers.cloudflare.com/email-service/get-started/send-emails/). Does **not** take over the zone's MX records, so it works alongside existing mail providers (Google Workspace, etc.).
+Uses Cloudflare's transactional Email Service. Doesn't take over the zone's MX records.
 
-1. Onboard your sending domain to Email Service in the Cloudflare dashboard and publish the SPF/DKIM records it requests. Zone must use Cloudflare DNS.
-2. Uncomment the `[[send_email]]` binding in `wrangler.toml`:
-   ```toml
-   [[send_email]]
-   name = "EMAIL"
-   ```
-3. Set your vars:
-   ```toml
-   EMAIL_PROVIDER = "cloudflare-email"
-   EMAIL_FROM = "alerts@yourdomain.com"
-   ```
+```toml
+[[send_email]]
+name = "EMAIL"
+[vars]
+EMAIL_PROVIDER = "cloudflare-email"
+EMAIL_FROM = "alerts@yourdomain.com"
+```
 
-### Cloudflare Email Routing (send_email binding)
+Onboard your sending domain in the Cloudflare dashboard and publish the SPF/DKIM records.
 
-Uses the same `[[send_email]]` binding as Email Service, but wraps messages as raw MIME for delivery through [Email Routing](https://developers.cloudflare.com/email-routing/). Requires Email Routing enabled on the zone, which **claims the zone's MX records** — only use if the zone doesn't have existing email.
+## Storage layout
 
-1. Enable Email Routing and verify destination addresses
-2. Uncomment the `[[send_email]]` binding in `wrangler.toml`
-3. Set your vars:
-   ```toml
-   EMAIL_PROVIDER = "cloudflare-routing"
-   ```
+### KV (`CSP_REPORTS`)
+
+| Key | Value | TTL |
+|---|---|---|
+| `report:{invertedTs}:{id}` | Full normalised report JSON | `KV_TTL_SECONDS` |
+| `idx:{id}` | Pointer to primary key (O(1) lookups) | `KV_TTL_SECONDS` |
+
+Inverted timestamp = `9999999999999 - Date.now()` so KV's lexicographic `list()` returns newest-first.
+
+### D1 (`DB`)
+
+| Table | Purpose |
+|---|---|
+| `properties` | One row per property (`default` + user-created) |
+| `issues` | One row per `(property_id, fingerprint)` — count + status + denormalised fields for fast list views |
+| `issue_events` | Per-issue rolling sample (capped at `EVENT_SAMPLE_CAP`) with country/ASN/colo |
+| `issue_status_log` | Audit trail for status transitions, including `system:resurrection` |
+| `_migrations` | Tracks applied migrations |
+
+Schema in `migrations/0001_init.sql` (and mirrored in `src/migrations.ts` for runtime).
 
 ## Development
 
 ```bash
-# Run locally
-npm run dev
-
-# Run tests
-npm test
-
-# Type check
-npm run typecheck
-
-# Generate wrangler types
-npm run types
+npm run dev               # wrangler dev (worker)
+npm run dev:dashboard     # vite dev server (proxies API calls to wrangler dev)
+npm test                  # vitest with @cloudflare/vitest-pool-workers (real KV + D1 via miniflare)
+npm run typecheck         # tsc + svelte-check
+npm run build:dashboard   # vite build → dist/
+npm run deploy            # build:dashboard + wrangler deploy
 ```
 
-### Testing
+Tests run inside `workerd` via [`@cloudflare/vitest-pool-workers`](https://developers.cloudflare.com/workers/testing/vitest-integration/) — KV and D1 are real bindings backed by miniflare, no mocks. Vitest reads bindings from `wrangler.test.toml` (checked in, placeholder IDs only) so production `wrangler.toml` stays free of test-only entries.
 
-Tests use [`@cloudflare/vitest-pool-workers`](https://developers.cloudflare.com/workers/testing/vitest-integration/) which runs inside the `workerd` runtime with real KV bindings (via Miniflare).
-
-```bash
-npm test
-```
-
-## Project Structure
+## Project layout
 
 ```
 csp-report-worker/
 ├── src/
-│   ├── index.ts              # Worker entrypoint, router
-│   ├── ingest.ts             # Parse + normalise incoming reports
-│   ├── dedup.ts              # Fingerprint + KV dedup logic
-│   ├── store.ts              # KV read/write for reports
-│   ├── config.ts             # Environment variable parsing
-│   ├── auth.ts               # Bearer token check
-│   ├── api.ts                # GET /reports handlers
-│   ├── types.ts              # Shared TypeScript types
-│   └── notify/
-│       ├── index.ts          # Notification orchestrator
-│       ├── email.ts          # Email dispatch (provider-agnostic)
-│       ├── provider.ts       # Email provider interface + factory
-│       ├── webhook.ts        # Generic webhook POST
-│       └── format.ts         # Plain text + HTML + Slack formatters
-├── test/
-│   ├── ingest.test.ts
-│   ├── dedup.test.ts
-│   ├── format.test.ts
-│   ├── email.test.ts
-│   └── api.test.ts
-├── wrangler-example.toml         # Template — copy to wrangler.toml
-├── wrangler.toml                 # Your local config (gitignored)
-├── package.json
-├── tsconfig.json
-├── vitest.config.ts
-├── env.d.ts
-├── AGENTS.md                     # AI agent guidelines
-└── LICENSE                       # GPL-3.0
+│   ├── index.ts           # Worker entry — Hono router, scheduled handler
+│   ├── ingest.ts          # Parse + normalise both CSP report formats
+│   ├── classify.ts        # 9-category source classifier
+│   ├── dedup.ts           # SHA-256 fingerprint
+│   ├── store.ts           # KV raw-report read/write
+│   ├── db.ts              # D1 client + migration runner (idempotent, cached)
+│   ├── migrations.ts      # Schema, mirror of migrations/0001_init.sql
+│   ├── properties.ts      # Property CRUD + slug routing + token check + env seed
+│   ├── properties-api.ts  # /properties HTTP handlers
+│   ├── issues.ts          # Issue upsert + status transitions + read queries
+│   ├── issues-api.ts      # /issues HTTP handlers
+│   ├── policy.ts          # CSP policy assistant — pure functions
+│   ├── policy-api.ts      # /properties/:id/policy-* handlers
+│   ├── cf.ts              # Cloudflare context extraction (no IP)
+│   ├── ua.ts              # Browser-family classifier for the breakdown panel
+│   ├── maintenance.ts     # Cron: retention sweep
+│   ├── api.ts             # Legacy /reports HTTP handlers (KV-backed)
+│   ├── auth.ts            # Bearer token check
+│   ├── config.ts          # Env-var parsing
+│   ├── notify/            # Email + webhook + formatters (per-property aware)
+│   └── types.ts           # Shared TS types
+├── dashboard/             # Svelte 5 SPA (Vite, Tailwind v4, bits-ui)
+├── migrations/            # SQL DDL files (mirror of src/migrations.ts)
+├── test/                  # Vitest suites
+├── wrangler-example.toml  # Template — copy to wrangler.toml
+├── wrangler.test.toml     # Test-only bindings (placeholder IDs, miniflare-managed)
+└── LICENSE                # GPL-3.0-or-later
 ```
 
 ## License

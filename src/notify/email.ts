@@ -6,7 +6,7 @@
 
 import type { Env, NormalisedReport } from "../types";
 import { getNotifyEmails, getEmailFrom } from "../config";
-import { formatPlainText, formatHtml, formatSubject } from "./format";
+import { formatPlainText, formatHtml, formatSubject, type NotifyKind } from "./format";
 import { createEmailProvider } from "./provider";
 
 /**
@@ -16,8 +16,11 @@ export async function sendEmails(
   env: Env,
   report: NormalisedReport,
   workerUrl: string,
+  kind: NotifyKind = "new",
+  recipientsOverride?: string[],
+  issueId?: string,
 ): Promise<void> {
-  const recipients = getNotifyEmails(env);
+  const recipients = recipientsOverride ?? getNotifyEmails(env);
   const from = getEmailFrom(env);
 
   if (recipients.length === 0 || !from) {
@@ -32,9 +35,9 @@ export async function sendEmails(
     return;
   }
 
-  const subject = formatSubject(report);
-  const plainText = formatPlainText(report, workerUrl);
-  const html = formatHtml(report, workerUrl);
+  const subject = formatSubject(report, kind);
+  const plainText = formatPlainText(report, workerUrl, kind, issueId);
+  const html = formatHtml(report, workerUrl, kind, issueId);
 
   const results = await Promise.allSettled(
     recipients.map(async (to) => {

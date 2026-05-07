@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 export interface Env {
-  // Allow dynamic KV namespace bindings
+  // Allow dynamic KV namespace bindings + D1 binding
   [key: string]: unknown;
 
   // Cloudflare send_email binding — used by both EMAIL_PROVIDER = "cloudflare-email"
@@ -20,6 +20,11 @@ export interface Env {
   // wrangler.toml under [assets]; absent in unit-test envs.
   ASSETS?: Fetcher;
 
+  // D1 database for issues, properties, and per-issue event samples.
+  // Conventional binding name; getD1() in src/db.ts also matches by
+  // constructor so users can rename without code changes.
+  DB?: D1Database;
+
   // --- Vars ---
   NOTIFY_EMAILS: string;
   NOTIFY_WEBHOOKS: string;
@@ -28,6 +33,21 @@ export interface Env {
   ALLOWED_ORIGINS: string;
   EMAIL_FROM: string;
   MUTE_CATEGORIES?: string;
+
+  // Per-issue rolling event sample cap (default 100). See src/config.ts.
+  EVENT_SAMPLE_CAP?: string;
+
+  // Hours to suppress notifications after `resolved` before a new report
+  // resurrects the issue (default 24). Replaces DEDUP_WINDOW_MINUTES.
+  RESURRECTION_GRACE_HOURS?: string;
+
+  // Days to retain issues. Older issues are deleted by the scheduled
+  // handler. Default 90; set to "0" to disable retention.
+  RETENTION_DAYS?: string;
+
+  // JSON list seeded at first request when `properties` table is empty.
+  // M4 will wire this up; declared in M1 so the type is stable.
+  BOOTSTRAP_PROPERTIES?: string;
 
   // --- Email provider selection ---
   // "cloudflare-email" | "cloudflare-routing" | "mailgun" | "ses" | "resend" (empty = email disabled)
@@ -167,3 +187,90 @@ export interface ListReportsResponse {
 export interface ErrorResponse {
   error: string;
 }
+
+// ---------------------------------------------------------------------------
+// Properties + Issues (D1)
+// ---------------------------------------------------------------------------
+
+export interface Property {
+  id: string;
+  slug: string;
+  name: string;
+  /** Bearer token required for /r/{slug} ingest. Empty string for `default`. */
+  ingestToken: string;
+  /** CSV override for global NOTIFY_EMAILS, or null to fall back. */
+  notifyEmails: string | null;
+  /** CSV override for global NOTIFY_WEBHOOKS, or null to fall back. */
+  notifyWebhooks: string | null;
+  /** CSV override for global MUTE_CATEGORIES, or null to fall back. */
+  muteCategories: string | null;
+  createdAt: string;
+  archivedAt: string | null;
+}
+
+export type IssueStatus = "open" | "acknowledged" | "ignored" | "resolved";
+
+export interface Issue {
+  /** Composite id: `${property_id}:${fingerprint}`. */
+  id: string;
+  propertyId: string;
+  fingerprint: string;
+  status: IssueStatus;
+  category: ReportCategory;
+  violatedDirective: string;
+  effectiveDirective: string;
+  blockedUri: string;
+  documentUri: string;
+  sourceFile: string | null;
+  lineNumber: number | null;
+  columnNumber: number | null;
+  sampleTitle: string;
+  firstSeen: string;
+  lastSeen: string;
+  resolvedAt: string | null;
+  resurrectedAt: string | null;
+  eventCount: number;
+  notifiedAt: string | null;
+}
+
+/** Sampled event row tied to an issue — capped at EVENT_SAMPLE_CAP per issue. */
+export interface IssueEvent {
+  id: number;
+  issueId: string;
+  reportId: string;
+  ts: string;
+  userAgent: string | null;
+  statusCode: number | null;
+  /** Cloudflare context — never an IP address. */
+  country: string | null;
+  asn: number | null;
+  asOrg: string | null;
+  colo: string | null;
+  cfRay: string | null;
+  httpProtocol: string | null;
+}
+
+export interface AggregateBucket {
+  label: string;
+  count: number;
+}
+
+/** Top-N breakdowns derived from the per-issue event sample. */
+export interface IssueAggregates {
+  countries: AggregateBucket[];
+  asns: AggregateBucket[];
+  browsers: AggregateBucket[];
+}
+
+export interface ListIssuesResponse {
+  issues: Issue[];
+  cursor: string | null;
+}
+
+export interface IssueDetailResponse {
+  issue: Issue;
+  events: IssueEvent[];
+  aggregates: IssueAggregates;
+}
+
+export type { ReportCategory } from "./classify";

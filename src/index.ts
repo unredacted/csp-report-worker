@@ -11,14 +11,43 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Context, Next } from "hono";
-import type { Env, NormalisedReport } from "./types";
-import { getAllowedOrigins, getDedupWindowMinutes, getKvNamespace, getKvTtlSeconds } from "./config";
+import type { Env, NormalisedReport, Property } from "./types";
+import {
+  getAllowedOrigins,
+  getEventSampleCap,
+  getKvNamespace,
+  getKvTtlSeconds,
+  getResurrectionGraceHours,
+} from "./config";
 import { parseRequest } from "./ingest";
-import { computeFingerprint, isDuplicate, recordDedup } from "./dedup";
+import { computeFingerprint } from "./dedup";
 import { storeReport } from "./store";
-import { dispatchNotifications, shouldNotify } from "./notify/index";
+import { dispatchNotifications, notifyKindForTransition } from "./notify/index";
 import { handleListReports, handleGetReport } from "./api";
+import {
+  handleGetIssue,
+  handleListIssues,
+  handlePatchIssue,
+} from "./issues-api";
+import {
+  handleArchiveProperty,
+  handleCreateProperty,
+  handleGetProperty,
+  handleListProperties,
+  handlePatchProperty,
+  handleRotateToken,
+} from "./properties-api";
+import { handlePolicyPreview, handlePolicySuggestions } from "./policy-api";
 import { requireAuth } from "./auth";
+import { ensureMigrations, getD1 } from "./db";
+import {
+  ensureDefaultProperty,
+  ensureSeeded,
+  resolvePropertyForRequest,
+} from "./properties";
+import { insertEvent, markNotified, upsertIssue } from "./issues";
+import { extractRequestContext } from "./cf";
+import { runRetentionSweep } from "./maintenance";
 
 type AppEnv = { Bindings: Env };
 
@@ -41,6 +70,7 @@ const corsForReports = cors({
 
 app.use("/report", corsForReports);
 app.use("/report/csp", corsForReports);
+app.use("/r/*", corsForReports);
 
 // ---------------------------------------------------------------------------
 // Auth middleware for protected GET endpoints
@@ -63,12 +93,44 @@ app.get("/health", (c) => c.body(null, 204));
 // Has no side effects — does not list, fetch, or modify any data.
 app.get("/auth/check", authMiddleware, (c) => c.body(null, 204));
 
-app.post("/report", (c) => handleReportIngestion(c.req.raw, c.env, c.executionCtx));
-app.post("/report/csp", (c) => handleReportIngestion(c.req.raw, c.env, c.executionCtx));
+app.post("/report", (c) => handleDefaultIngestion(c.req.raw, c.env, c.executionCtx));
+app.post("/report/csp", (c) => handleDefaultIngestion(c.req.raw, c.env, c.executionCtx));
+app.post("/r/:slug", (c) =>
+  handleSlugIngestion(c.req.raw, c.env, c.executionCtx, c.req.param("slug")!),
+);
 
 app.get("/reports", authMiddleware, (c) => handleListReports(c.req.raw, c.env));
 app.get("/reports/:id{[a-f0-9]+}", authMiddleware, (c) =>
   handleGetReport(c.req.raw, c.env, c.req.param("id")!),
+);
+
+app.get("/issues", authMiddleware, (c) => handleListIssues(c.req.raw, c.env));
+app.get("/issues/:id", authMiddleware, (c) =>
+  handleGetIssue(c.req.raw, c.env, c.req.param("id")!),
+);
+app.patch("/issues/:id", authMiddleware, (c) =>
+  handlePatchIssue(c.req.raw, c.env, c.req.param("id")!),
+);
+
+app.get("/properties", authMiddleware, (c) => handleListProperties(c.req.raw, c.env));
+app.post("/properties", authMiddleware, (c) => handleCreateProperty(c.req.raw, c.env));
+app.get("/properties/:id", authMiddleware, (c) =>
+  handleGetProperty(c.req.raw, c.env, c.req.param("id")!),
+);
+app.patch("/properties/:id", authMiddleware, (c) =>
+  handlePatchProperty(c.req.raw, c.env, c.req.param("id")!),
+);
+app.post("/properties/:id/rotate-token", authMiddleware, (c) =>
+  handleRotateToken(c.req.raw, c.env, c.req.param("id")!),
+);
+app.post("/properties/:id/archive", authMiddleware, (c) =>
+  handleArchiveProperty(c.req.raw, c.env, c.req.param("id")!),
+);
+app.get("/properties/:id/policy-suggestions", authMiddleware, (c) =>
+  handlePolicySuggestions(c.req.raw, c.env, c.req.param("id")!),
+);
+app.post("/properties/:id/policy-preview", authMiddleware, (c) =>
+  handlePolicyPreview(c.req.raw, c.env, c.req.param("id")!),
 );
 
 // Anything unmatched falls through to the dashboard SPA on GET/HEAD.
@@ -88,24 +150,81 @@ export default class CspReportWorker extends WorkerEntrypoint<Env> {
   override fetch(request: Request): Response | Promise<Response> {
     return app.fetch(request, this.env, this.ctx);
   }
+
+  /**
+   * Cron-triggered maintenance. Configure in wrangler.toml under
+   * `[triggers] crons = ["0 * * * *"]` (hourly) or similar.
+   */
+  override async scheduled(_controller: ScheduledController): Promise<void> {
+    const db = getD1(this.env);
+    if (!db) return;
+    try {
+      await ensureMigrations(db);
+      const result = await runRetentionSweep(db, this.env);
+      if (result.deletedIssues > 0) {
+        console.log(
+          `[scheduled] retention sweep deleted ${result.deletedIssues} issues older than ${result.cutoff}`,
+        );
+      }
+    } catch (err) {
+      console.error("[scheduled] retention sweep failed:", err);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Report ingestion handler
 // ---------------------------------------------------------------------------
 
-async function handleReportIngestion(
+/** Legacy `/report` and `/report/csp` ingest — attributes to the `default` property. */
+async function handleDefaultIngestion(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
-  // --- Origin check (CORS middleware allows the request through; we still
-  // reject unknown origins explicitly so reports are only accepted from
-  // configured sites) ---
+  const db = getD1(env);
+  let property: Property | null = null;
+  if (db) {
+    await ensureMigrations(db);
+    await ensureSeeded(db, env);
+    property = await ensureDefaultProperty(db);
+  }
+  return processIngestion(request, env, ctx, property);
+}
+
+/** New `/r/{slug}?t={token}` ingest path — per-property routing. */
+async function handleSlugIngestion(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  slug: string,
+): Promise<Response> {
+  const db = getD1(env);
+  if (!db) {
+    return new Response(JSON.stringify({ error: "D1 binding required for /r/:slug" }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  await ensureMigrations(db);
+  await ensureSeeded(db, env);
+
+  const resolved = await resolvePropertyForRequest(db, request, { slug });
+  if (resolved instanceof Response) return resolved;
+
+  return processIngestion(request, env, ctx, resolved);
+}
+
+/** Shared ingest logic — origin check, parse, KV write, D1 upsert, notify. */
+async function processIngestion(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  property: Property | null,
+): Promise<Response> {
   const originError = checkOrigin(request, env);
   if (originError) return originError;
 
-  // --- Parse + normalise ---
   let reports: NormalisedReport[];
   try {
     reports = await parseRequest(request);
@@ -115,38 +234,50 @@ async function handleReportIngestion(
     return new Response("Internal error", { status: 500 });
   }
 
-  const dedupWindow = getDedupWindowMinutes(env);
   const kvTtl = getKvTtlSeconds(env);
   const workerUrl = new URL(request.url).origin;
+  const fallbackKv = getKvNamespace(env);
+  const db = getD1(env);
+  const reqCtx = extractRequestContext(request);
+  const eventCap = getEventSampleCap(env);
+  const graceMs = getResurrectionGraceHours(env) * 60 * 60 * 1000;
 
-  // --- Process each report ---
   for (const report of reports) {
-    // Always store the report regardless of dedup status
-    const fallbackKv = getKvNamespace(env);
     ctx.waitUntil(storeReport(fallbackKv, report, kvTtl));
 
-    // Check dedup and dispatch notifications for new violations
-    ctx.waitUntil(
-      (async () => {
-        try {
-          const fingerprint = await computeFingerprint(report);
-          const dupe = await isDuplicate(fallbackKv, fingerprint);
+    if (db && property) {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const fingerprint = await computeFingerprint(report);
+            const result = await upsertIssue(db, property, report, fingerprint, graceMs);
+            await insertEvent(db, result.issueId, report, reqCtx, eventCap);
 
-          // Record dedup entry (creates or increments)
-          await recordDedup(fallbackKv, fingerprint, dedupWindow);
-
-          if (!dupe && shouldNotify(env, report)) {
-            // First occurrence and not muted — notify
-            await dispatchNotifications(env, report, workerUrl);
+            const kind = notifyKindForTransition(
+              env,
+              result.transition,
+              report.category,
+              property,
+            );
+            if (kind) {
+              await dispatchNotifications(
+                env,
+                report,
+                workerUrl,
+                kind,
+                property,
+                result.issueId,
+              );
+              await markNotified(db, result.issueId);
+            }
+          } catch (err) {
+            console.error("[ingest] Error in D1 issue pipeline:", err);
           }
-        } catch (err) {
-          console.error("[ingest] Error in dedup/notify pipeline:", err);
-        }
-      })(),
-    );
+        })(),
+      );
+    }
   }
 
-  // Browsers expect 204 and don't read the body
   return new Response(null, { status: 204 });
 }
 

@@ -1,0 +1,17 @@
+# Test-only wrangler config used by vitest-pool-workers.
+# Bindings here are realised by miniflare in-memory — IDs are placeholders.
+# Production deploys read wrangler.toml directly with `--env <name>`.
+
+name = "csp-report-worker"
+main = "src/index.ts"
+compatibility_date = "2026-04-09"
+compatibility_flags = ["nodejs_compat"]
+
+[[kv_namespaces]]
+binding = "CSP_REPORTS"
+id = "test-placeholder"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "csp-report-worker-test"
+database_id = "test-placeholder"
