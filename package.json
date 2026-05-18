@@ -16,18 +16,18 @@
     "typecheck": "tsc --noEmit && svelte-check --tsconfig dashboard/tsconfig.json"
   },
   "dependencies": {
-    "@tanstack/svelte-query": "^6.0.0",
+    "@tanstack/svelte-query": "^6.1.29",
     "aws4fetch": "^1.0.20",
     "bits-ui": "^2.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "date-fns": "^4.1.0",
-    "hono": "^4.12.18",
+    "date-fns": "^4.2.1",
+    "hono": "^4.12.19",
     "lucide-svelte": "^1.0.0",
     "mimetext": "^3.0.28",
-    "svelte": "^5.46.0",
+    "svelte": "^5.55.8",
     "svelte-sonner": "^1.0.0",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.16.0",
