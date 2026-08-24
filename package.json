@@ -16,17 +16,17 @@
     "typecheck": "tsc --noEmit && svelte-check --tsconfig dashboard/tsconfig.json"
   },
   "dependencies": {
-    "@tanstack/svelte-query": "^6.1.33",
+    "@tanstack/svelte-query": "^6.1.38",
     "aws4fetch": "^1.0.20",
-    "bits-ui": "^2.0.0",
+    "bits-ui": "^2.19.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
-    "hono": "^4.12.25",
+    "hono": "^4.13.3",
     "lucide-svelte": "^1.0.0",
     "mimetext": "^3.0.28",
-    "svelte": "^5.56.1",
-    "svelte-sonner": "^1.0.0",
+    "svelte": "^5.56.10",
+    "svelte-sonner": "^1.2.1",
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
